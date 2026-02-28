@@ -144,7 +144,7 @@ class tmap:
         self.map_value = map_value
 
     def get_x_coord_map_wrt_centre(self,theta_x=0.):
-
+        
         x_coord = (np.arange(0,self.nx)-self.nx*0.5+0.5)*self.dx + theta_x
         x_coord_map = np.tile(x_coord,(self.nx,1))
 
@@ -246,7 +246,6 @@ def get_fft_f(tmap,pix):
     for i in range(0,n_freq):
 
         ret[:,:,i] = get_fft(tmap[:,:,i],pix)
-
     return ret
 
 def get_ifft_f(tmap,pix):
@@ -542,6 +541,27 @@ def get_newshape_lmax1d(shape, lmax1d, dx_rad, powerOfTwo=False):
 
     if powerOfTwo:
 
+        new_shape = (2**np.ceil(np.log2(new_shape))).astype(int)
+
+    return tuple(new_shape)
+
+def get_newshape_lmax1d_anisotropic(shape, lmax1d, dx_rad, dy_rad, powerOfTwo=False):
+    if len(shape) > 2:
+        raise ValueError("Expected 2-tuple shape")
+
+    newdx = np.pi / lmax1d  # [rad/pixel]
+
+    if newdx <= dx_rad and newdx <= dy_rad:
+        return shape
+
+    extent_x = shape[0] * dx_rad
+    extent_y = shape[1] * dy_rad
+
+    new_nx = int(np.ceil(extent_x / newdx))
+    new_ny = int(np.ceil(extent_y / newdx))
+    new_shape = np.array([new_nx, new_ny], dtype=int)
+
+    if powerOfTwo:
         new_shape = (2**np.ceil(np.log2(new_shape))).astype(int)
 
     return tuple(new_shape)
@@ -878,6 +898,7 @@ def get_fsky_criterion_mask(pix,mask_select,nside_tile,criterion=0.3,tile_type="
 
         mask_select = np.zeros((pix.nx,pix.ny))
 
+
     return mask_select
 
 class ps_mask:
@@ -986,7 +1007,7 @@ def get_binned_mean_map(map,pix,bins,fft_flag=False):
     return bins_centres,binned_map
 
 def convolve_tmap_experiment(pix,tmap,exp,freqs=None,beam_type="gaussian",tile_type="healpix",wcs=None):
-
+    
     n_freqs = tmap.shape[2]
     freqs = np.arange(n_freqs)
     tmap_convolved = np.zeros(tmap.shape)
@@ -1014,13 +1035,21 @@ def convolve_tmap_experiment(pix,tmap,exp,freqs=None,beam_type="gaussian",tile_t
                 tmap_convolved[:,:,i] = enmap.smooth_gauss(map_freq, sigma)
 
             elif beam_type == "real":
+                from pixell import curvedsky
+                map_freq = enmap.enmap(tmap[:,:,i],wcs)
+                B_l = exp.beams[i]
+                alm = curvedsky.map2alm(map_freq, lmax=len(B_l)-1)  # map_freq 是您的 enmap
+                alm_smoothed = curvedsky.almxfl(alm, B_l)  # 这就是关键步骤：alm * B_l
+                template = enmap.zeros(map_freq.shape, map_freq.wcs)  # 这是一个空的 enmap 对象
+                tmap_convolved[:,:,i] = curvedsky.alm2map(alm_smoothed, template)  # 保持相同的形状和 WCS
 
-                tmap_convolved = None #todo
 
+                #tmap_convolved = None #todo
+    
     return tmap_convolved
 
 def convolve_tmap_fft_experiment(pix,tmap_fft,exp,freqs=None,beam_type="gaussian"):
-
+    print("!!! convolve_tmap_fft_experiment")
     n_freqs = tmap_fft.shape[2]
 
     if freqs is None:
@@ -1064,11 +1093,11 @@ def get_tmap_from_map(map,n_freq):
 
 
 def select_freqs(tmap,freqs):
-
+    print(tmap.shape)
     return tmap[:,:,freqs]
 
 def get_tmap_with_sed(pix,tmap,base_freq,exp,sed,beam_type="gaussian"):
-
+    
     sed = sed/sed[base_freq]
     ret = np.zeros(tmap.shape)
 
@@ -1244,7 +1273,6 @@ def inpaint_freq(tmap,mask,n_inpaint=None, pix=None, noise=None,inpaint_type="di
     return ret
 
 def inpaint(image, mask, n_inpaint=None, pix=None, noise=None, inpaint_type="diffusive"):
-
     if inpaint_type == "diffusive":
 
         inpainted_image = diffusive_inpaint(image, mask, n_inpaint)  # Legacy inpaint
@@ -1262,6 +1290,7 @@ def inpaint(image, mask, n_inpaint=None, pix=None, noise=None, inpaint_type="dif
 
         ivar = omaps.ivar(image.shape, image.wcs, noise_muK_arcmin=noise) if noise is not None else None
         inpainted_image = omaps.gapfill_edge_conv_flat(image, ~mask.astype(bool), ivar=ivar, rmin=0.5*utils.arcmin, alpha=-4)
+        
 
     return inpainted_image
 
@@ -1345,7 +1374,6 @@ def circular_cosine_blend_adaptive(
 
 @jit(nopython=False)
 def diffusive_inpaint(image,mask,n_inpaint):
-
     nx = len(image)
 
     if np.array_equal(np.ones((nx,nx)),mask) == True:
@@ -1360,7 +1388,7 @@ def diffusive_inpaint(image,mask,n_inpaint):
         y_0 = zeros[1]
         i = 0
         inpainted_image = masked_image
-
+        
         for j in range(0,n_inpaint,1):
 
             for i in range(0,len(x_0),1):
@@ -1474,16 +1502,19 @@ def get_expanded_map_car(full_map, radec, expansion_deg=1.0):
     # print(ra_min,ra_min_expanded)
     # print(ra_max,ra_max_expanded)
 
-    submap_expanded = full_map.submap([[dec_min_expanded*pixell_utils.degree,ra_min_expanded*pixell_utils.degree], [dec_max_expanded*pixell_utils.degree,ra_max_expanded*pixell_utils.degree]])
+    if ra_min_expanded < ra_max_expanded:
+        submap_expanded = full_map.submap([[dec_min_expanded*pixell_utils.degree,ra_min_expanded*pixell_utils.degree], [dec_max_expanded*pixell_utils.degree,ra_max_expanded*pixell_utils.degree]])
+    else:
+        submap_expanded = full_map.submap([[dec_min_expanded*pixell_utils.degree,(ra_min_expanded-360)*pixell_utils.degree], [dec_max_expanded*pixell_utils.degree,ra_max_expanded*pixell_utils.degree]])
+    #submap_expanded = full_map.submap([[dec_min_expanded*pixell_utils.degree,ra_min_expanded*pixell_utils.degree], [dec_max_expanded*pixell_utils.degree,ra_max_expanded*pixell_utils.degree]])
 
     dec_map, ra_map = submap_expanded.posmap()
     dec_map = np.degrees(dec_map)
     ra_map = np.degrees(ra_map)
 
-
     mask = ((dec_map >= dec_min) & (dec_map <= dec_max) &
             ((ra_map - ra_min) % (360.) <= (ra_max - ra_min) % (360.))).astype(float)
-
+    
     return submap_expanded, mask
 
 def smooth_mask_transition(map, mask, n_buffer):

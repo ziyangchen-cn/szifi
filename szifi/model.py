@@ -9,7 +9,6 @@ import astropy.cosmology as cp
 class gnfw:
 
     def __init__(self,M,z_halo,cosmology,c=1.177,Delta=500.,type="arnaud",R_truncation=5.):
-
         #Create variables
 
         self.M = M*1e15
@@ -47,14 +46,14 @@ class gnfw:
     def get_p_cal_map(self,pix,c_500,theta_misc=[0.,0.],tile_type="healpix",wcs=None):
 
         theta_max = self.theta_Delta*self.my_params_sz.R_truncation
-        theta_vec = np.linspace(0.,theta_max,1000)
+        theta_vec = np.linspace(1e-20,theta_max,1000)
         p_cal_vec = np.zeros(len(theta_vec))
 
         for i in range(0,len(theta_vec)):
 
             x = theta_vec[i]/self.theta_Delta
             p_cal_vec[i] = self.get_p_cal_int(x)
-
+        
         if tile_type == "healpix":
 
             from .maps import rmap
@@ -68,16 +67,19 @@ class gnfw:
             position_map = enmap.empty((pix.nx,pix.ny),wcs)
             pos = position_map.posmap()  # shape: (2, Ny, Nx)
             dec_map, ra_map = pos
-            pix_center = [(pix.nx - 1) / 2, (pix.ny - 1) / 2]
+            if theta_misc[0]==0 and theta_misc[1]==0:
+                pix_center = [(pix.nx - 1) / 2, (pix.ny - 1) / 2]
+            else:
+                pix_center = theta_misc
             dec0, ra0 = enmap.pix2sky(position_map.shape,wcs,pix_center)
 
             theta_map = utils.angdist([ra0,dec0], [ra_map,dec_map]) 
 
             # plot = enplot.plot(1/theta_map**2, colorbar=True, downgrade=2)
             # enplot.write("figures/dist_map", plot)
-
+        
         p_cal_map = np.interp(theta_map,theta_vec,p_cal_vec,right=0.)
-
+        #print("test_print", p_cal_map, np.sum(p_cal_map))
         return p_cal_map
 
     def get_y_map(self,pix,theta_misc=[0.,0.],tile_type="healpix",wcs=None):
@@ -195,7 +197,7 @@ class gnfw:
         def p_cal(z_los):
 
             x = np.sqrt(z_los**2+r**2)
-
+            
             return self.pressure_profile(x)
 
         p_int = integrate.quad(p_cal,-self.my_params_sz.R_truncation,self.my_params_sz.R_truncation,
@@ -208,7 +210,7 @@ class gnfw:
         if eval_type == "standard": 
 
             y_map = self.get_y_map(pix,theta_misc=theta_misc,tile_type=tile_type,wcs=wcs)
-
+            
         elif eval_type == "hankel": #Doesn't work for CAR tiles for now
 
             y_map = self.get_y_map_hankel(pix,theta_misc=theta_misc)
@@ -315,7 +317,6 @@ class gnfw:
 
             rprofs_convolved = rht.harm2real(lprofs*beam_fft)
             r, rprofs_convolved = rht.unpad(rht.r,rprofs_convolved)
-
             rprofs = rht.harm2real(lprofs)
             r, rprofs = rht.unpad(rht.r,rprofs)
 
@@ -344,8 +345,8 @@ class gnfw:
             theta_misc = get_theta_misc(theta_cart,pix)
 
         if eval_type == "standard":
-
             tmap = self.get_t_map(pix,exp,theta_misc=theta_misc,eval_type=eval_type,sed=sed,tile_type=tile_type,wcs=wcs)
+            
             from .maps import convolve_tmap_experiment
             tmap_convolved = convolve_tmap_experiment(pix,tmap,exp,beam_type=beam,tile_type=tile_type,wcs=wcs)
 

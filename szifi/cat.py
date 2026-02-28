@@ -7,6 +7,7 @@ import copy
 from sklearn.cluster import AgglomerativeClustering
 from sklearn.metrics import pairwise_distances
 from szifi import maps, sphere
+from tqdm import tqdm
 
 #standard keys used throughout:
 
@@ -110,7 +111,7 @@ class cluster_catalogue:
         return len(self.catalogue["q_opt"][np.where(self.catalogue["q_opt"] != -1.)[0]])
 
 def merge_detections(catalogue,radius_arcmin=10.,return_merge_flag=False,mode="closest",
-fac_theta_500=1.,merge_radius_type="theta_500"):
+fac_theta_500=1,merge_radius_type="theta_500"):
 
     catalogue = get_catalogue_indices(catalogue,np.where(catalogue.catalogue["q_opt"] != -1.)[0])
     n_clusters = len(catalogue.catalogue["q_opt"])
@@ -175,7 +176,7 @@ fac_theta_500=1.,merge_radius_type="theta_500"):
 
         clust = AgglomerativeClustering(distance_threshold=radius_arcmin,
         linkage="single",n_clusters=None,compute_full_tree=True,
-        affinity=get_affinity_spherical)
+        metric = get_affinity_spherical)
         clust.fit(coords)
         labels = clust.labels_
         n_clusters_merged = np.max(labels)+1
@@ -205,6 +206,8 @@ fac_theta_500=1.,merge_radius_type="theta_500"):
 
         while i > 0:
 
+            
+
             catalogue_new = get_catalogue_indices(catalogue,[0])
             catalogue_merged.append(catalogue_new,append_keys="new")
 
@@ -223,9 +226,7 @@ fac_theta_500=1.,merge_radius_type="theta_500"):
                 indices_remove = np.where(distances < fac_theta_500)[0]
 
             elif merge_radius_type == "theta_500":
-
                 indices_remove = np.where(distances < fac_theta_500*catalogue_new.catalogue["theta_500"][0])[0]
-
 
             catalogue = remove_catalogue_indices(catalogue,indices_remove)
 
@@ -310,9 +311,9 @@ mode="close+highest_q",sort=True,unique=False):
 
     n_clusters_1 = catalogue_1.get_n_clusters()
 
-    for i in range(0,n_clusters_1):
+    for i in tqdm(range(0,n_clusters_1)):
 
-        print(i,"of",n_clusters_1)
+        # print(i,"of",n_clusters_1)
 
         if lonlat == False:
 
@@ -336,7 +337,7 @@ mode="close+highest_q",sort=True,unique=False):
 
         if len(indices_closest) != 0:
 
-            print(indices_closest)
+            # print(indices_closest)
 
             if mode == "close+highest_q":  #in this mode, catalogue_1 should be the observed catalogue
 
@@ -393,6 +394,174 @@ mode="close+highest_q",sort=True,unique=False):
         catalogue_2_new.append(cat_temp_2,append_keys = "new")
 
     return (catalogue_1_new,catalogue_2_new)
+
+
+def identify_clusters_fast(
+    catalogue_1,
+    catalogue_2,
+    id_radius_arcmin=15.,
+    lonlat=False,
+    mode="close+highest_q",
+    sort=True,
+    unique=False,
+):
+    from sklearn.neighbors import BallTree, KDTree
+    """
+    Fast version of identify_clusters using BallTree / KDTree.
+
+    Behaviour is equivalent to the original SZiFi implementation,
+    but with O(N log N) neighbour search.
+    """
+    # print("debug: identify_clusters_fast")
+    # -----------------------------
+    # Preparation
+    # -----------------------------
+    catalogue_1_new = copy.deepcopy(catalogue_1)
+    catalogue_2_new = cluster_catalogue()
+    indices_catalogue_2 = np.zeros(catalogue_2.get_n_clusters())
+
+    # Sort catalogue_1 by decreasing q_opt (same as original)
+    if sort:
+        indices_sorted = np.flip(np.argsort(catalogue_1_new.catalogue["q_opt"]))
+        catalogue_1_new = get_catalogue_indices(catalogue_1_new, indices_sorted)
+        catalogue_1 = get_catalogue_indices(catalogue_1, indices_sorted)
+
+    n_clusters_1 = catalogue_1.get_n_clusters()
+    n_clusters_2 = catalogue_2.get_n_clusters()
+
+    # Matching radius in radians
+    theta = id_radius_arcmin / 60. / 180. * np.pi
+
+    # -----------------------------
+    # Build tree for catalogue_2
+    # -----------------------------
+    if lonlat in [True, "equatorial"]:
+        # Spherical coordinates → BallTree (haversine)
+        if lonlat is True:
+            lon2 = np.deg2rad(catalogue_2.catalogue["lon"])
+            lat2 = np.deg2rad(catalogue_2.catalogue["lat"])
+        else:  # equatorial
+            lon2 = np.deg2rad(catalogue_2.catalogue["ra"])
+            lat2 = np.deg2rad(catalogue_2.catalogue["dec"])
+
+        coords2 = np.vstack([lat2, lon2]).T
+        tree = BallTree(coords2, metric="haversine")
+        # print("debug: build tree")
+
+    else:
+        # Flat-sky → KDTree
+        coords2 = np.vstack([
+            catalogue_2.catalogue["theta_x"],
+            catalogue_2.catalogue["theta_y"]
+        ]).T
+        tree = KDTree(coords2)
+
+    # -----------------------------
+    # Query neighbours for catalogue_1
+    # -----------------------------
+    if lonlat in [True, "equatorial"]:
+        if lonlat is True:
+            lon1 = np.deg2rad(catalogue_1.catalogue["lon"])
+            lat1 = np.deg2rad(catalogue_1.catalogue["lat"])
+        else:
+            lon1 = np.deg2rad(catalogue_1.catalogue["ra"])
+            lat1 = np.deg2rad(catalogue_1.catalogue["dec"])
+
+        coords1 = np.vstack([lat1, lon1]).T
+        neighbours = tree.query_radius(coords1, r=theta)
+        # print("debug: found neighbours")
+
+    else:
+        coords1 = np.vstack([
+            catalogue_1.catalogue["theta_x"],
+            catalogue_1.catalogue["theta_y"]
+        ]).T
+        neighbours = tree.query_radius(coords1, r=theta)
+
+    # -----------------------------
+    # Matching loop (logic unchanged)
+    # -----------------------------
+    for i in tqdm(range(n_clusters_1)):
+
+        indices_closest = neighbours[i]
+
+        if unique:
+            indices_closest = indices_closest[
+                indices_catalogue_2[indices_closest] == 0.
+            ]
+
+        if len(indices_closest) != 0:
+
+            if mode == "close+highest_q":
+                index_max = indices_closest[
+                    np.argmax(catalogue_2.catalogue["q_opt"][indices_closest])
+                ]
+
+            elif mode == "closest":
+                if lonlat in [True, "equatorial"]:
+                    # exact distance only for candidates
+                    dlat = lat1[i] - lat2[indices_closest]
+                    dlon = lon1[i] - lon2[indices_closest]
+                    dist = np.sqrt(dlat**2 + dlon**2)
+                else:
+                    dx = catalogue_1.catalogue["theta_x"][i] - catalogue_2.catalogue["theta_x"][indices_closest]
+                    dy = catalogue_1.catalogue["theta_y"][i] - catalogue_2.catalogue["theta_y"][indices_closest]
+                    dist = np.sqrt(dx**2 + dy**2)
+
+                index_max = indices_closest[np.argmin(dist)]
+
+            # Append matched object
+            cat_temp = cluster_catalogue()
+            for key in catalogue_2.catalogue.keys():
+                if len(catalogue_2.catalogue[key]) > 0:
+                    cat_temp.catalogue[key] = catalogue_2.catalogue[key][index_max]
+
+            catalogue_2_new.append(cat_temp, append_keys="new")
+            indices_catalogue_2[index_max] = 1.
+
+        else:
+            # No match → fill with -1
+            cat_temp = cluster_catalogue()
+            for key in catalogue_2.catalogue.keys():
+                if len(catalogue_2.catalogue[key]) > 0:
+                    cat_temp.catalogue[key] = np.array([-1])
+            catalogue_2_new.append(cat_temp, append_keys="new")
+
+    # -----------------------------
+    # Add unmatched catalogue_2 objects
+    # -----------------------------
+    indices = np.where(indices_catalogue_2 == 0.)[0]
+
+    cat_temp_1 = cluster_catalogue()
+    cat_temp_2 = cluster_catalogue()
+    for key in catalogue_1.catalogue.keys():
+        if len(catalogue_1.catalogue[key]) > 0:
+            cat_temp_1.catalogue[key] = - np.ones(len(indices))
+    for key in catalogue_2.catalogue.keys():
+        if len(catalogue_2.catalogue[key]) > 0:
+            cat_temp_2.catalogue[key] = np.array([catalogue_2.catalogue[key][indices]])
+    
+    catalogue_1_new.append(cat_temp_1, append_keys="new")
+    catalogue_2_new.append(cat_temp_2, append_keys="new")
+    
+
+    # for i in tqdm(indices):
+    #     cat_temp_1 = cluster_catalogue()
+    #     cat_temp_2 = cluster_catalogue()
+
+    #     for key in catalogue_1.catalogue.keys():
+    #         if len(catalogue_1.catalogue[key]) > 0:
+    #             cat_temp_1.catalogue[key] = np.array([-1])
+
+    #     for key in catalogue_2.catalogue.keys():
+    #         if len(catalogue_2.catalogue[key]) > 0:
+    #             cat_temp_2.catalogue[key] = np.array([catalogue_2.catalogue[key][i]])
+
+    #     catalogue_1_new.append(cat_temp_1, append_keys="new")
+    #     catalogue_2_new.append(cat_temp_2, append_keys="new")
+
+    return catalogue_1_new, catalogue_2_new
+
 
 
 def apply_mask_select(cat,mask_select,pix,tile_type="healpix",wcs=None):
@@ -732,19 +901,23 @@ class results_detection:
             self.catalogues[key].get_lonlat(nside,i,pix)
 
     def append(self,results_new):
-
+        # self.results.append(results_dict[field_id])
         for key in results_new.catalogues.keys():
+            
+            
+            if key in self.catalogues:
+                # print("before append", self.catalogues[key].get_n_clusters())
+                self.catalogues[key].append(results_new.catalogues[key],append_keys="new")
+                # print('\n',key, results_new.catalogues[key].catalogue, '\n')
+                # print(key, self.catalogues[key].catalogue, len(self.catalogues[key].catalogue['q_opt']),'\n')
 
-                if key in self.catalogues:
-
-
-                    self.catalogues[key].append(results_new.catalogues[key],append_keys="new")
-
-                else:
-
-                    self.catalogues[key] = results_new.catalogues[key]
-
-
+            else:
+                
+                self.catalogues[key] = results_new.catalogues[key]
+                # print("*** id", key, id(self.catalogues[key]))
+                # print('\n',key, results_new.catalogues[key].catalogue, '\n')
+                # print(key, self.catalogues[key].catalogue, len(self.catalogues[key].catalogue['q_opt']),'\n')
+            # print("after append", self.catalogues[key].get_n_clusters())
     def make_copy(self):
 
         results_copy = results_detection()
@@ -899,7 +1072,14 @@ class detection_processor:
         i = 0
 
         for field_id in field_ids:
-
+            # print("field_id", field_id)
+            # print("N_cluster of find_0 (this tile):", results_dict[field_id].catalogues['catalogue_find_0'].get_n_clusters())
+            # if "find_1" in results_dict[field_id].sigma_vec:
+                # print("N_cluster of find_1 (this tile):", results_dict[field_id].catalogues['catalogue_find_1'].get_n_clusters())
+                
+            
+            
+            
             if "find_1" in results_dict[field_id].sigma_vec:
 
                 self.sigma_matrix[i,:] = results_dict[field_id].sigma_vec["find_1"]
@@ -907,18 +1087,27 @@ class detection_processor:
             if "find_0" in results_dict[field_id].sigma_vec:
 
                 self.sigma_matrix_noit[i,:] = results_dict[field_id].sigma_vec["find_0"]
-
+\
             if params_szifi["iterative"] == True and "find_1" not in results_dict[field_id].sigma_vec:
+                # the find_0 catalogue is empty
 
                 cat_keys = copy.deepcopy(list(results_dict[field_id].catalogues.keys()))
-
                 for cat_key in cat_keys:
-
-                    results_dict[field_id].catalogues[cat_key[0:-1] + "1"] = results_dict[field_id].catalogues[cat_key]
-
+                    results_dict[field_id].catalogues[cat_key[0:-1] + "1"] = copy.deepcopy(results_dict[field_id].catalogues[cat_key])
+                    
             self.results.append(results_dict[field_id])
-
+            # print("Adding the tile catalogue to the global catalogue")
+            # print("N_cluster of find_0 (global):", self.results.catalogues['catalogue_find_0'].get_n_clusters())
+            # print("N_cluster of find_1 (global):", self.results.catalogues['catalogue_find_1'].get_n_clusters())
             i = i + 1
+            
+            # break
+        # indice = np.where(self.results.catalogues['catalogue_find_0'].catalogue['pixel_ids'] == 'sq4deg_0_5')[0]
+        # print(field_id, indice)
+        # print(results_dict[field_id])
+            
+
+            
 
         self.results.sigma_matrix_noit = self.sigma_matrix_noit
         self.results.sigma_matrix = self.sigma_matrix

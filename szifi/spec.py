@@ -5,7 +5,6 @@ import pymaster as nmt
 from szifi import maps
 import scipy.ndimage as ndimage
 
-
 class power_spectrum:
 
     def __init__(self, pix, mask=None, cm_compute=False, cm_save=False,
@@ -59,6 +58,7 @@ class power_spectrum:
             elif os.path.isfile(cm_name) == True:
 
                 print("Coupling matrix found")
+                print(cm_name)
 
                 if cm_compute_scratch == True:
 
@@ -77,7 +77,6 @@ class power_spectrum:
 
 
     def get_coupling_matrix(self):
-
         f0 = nmt.NmtFieldFlat(self.pix.nx*self.pix.dx,self.pix.ny*self.pix.dy,self.mask,[np.zeros((self.pix.nx,self.pix.ny))])
         w00 = nmt.NmtWorkspaceFlat()
         w00.compute_coupling_matrix(f0,f0,self.bins)
@@ -133,7 +132,7 @@ class power_spectrum:
             self.ell_map = ell_map
 
             ret = (ell_vec_eff,spec_tensor_binned)
-
+        
         return ret
 
 def get_binned_spec(spec_map,ell_map,bins_low,bins_high):
@@ -163,16 +162,19 @@ def get_binned_spec(spec_map,ell_map,bins_low,bins_high):
 
 class cross_spec:
 
-    def __init__(self,freqs):
+    def __init__(self,freqs, save_label):
 
         self.freqs = freqs
         self.n_freqs = len(self.freqs)
         self.spec_tensor = None
         self.ell_vec = None
+        self.save_label = ""
+        
 
     def get_cross_spec(self,pix,t_map=None,t_map_2=None,mask=None,bin_fac=4., new_shape=None, ps=None,
     decouple_type="master",inpaint_flag=False,mask_point=None,
-    lsep=3000,implementation="pymaster"): #estimates cross spectra. exp only if theory == True
+    lsep=3000,implementation="pymaster",
+                      R_mask = 1): #estimates cross spectra. exp only if theory == True
 
         pix = maps.degrade_pix(pix, new_shape)
         # Other degrading in power_spectrum rather than here
@@ -227,7 +229,7 @@ class cross_spec:
         self.spec_tensor = spec_tensor
         self.ell_vec = ell
 
-        return ell,spec_tensor # len(ell) x n_freq x n_freq tensor
+        return ell, spec_tensor # len(ell) x n_freq x n_freq tensor
 
 
     def get_cov(self,pix,t_map=None,mask=None,bin_fac=4,new_shape=None,ps=None,
@@ -249,8 +251,11 @@ class cross_spec:
                 ell_vec = self.ell_vec
                 spec_tensor = self.spec_tensor
 
+            print("spec_tensor.shape", spec_tensor.shape);#exit()
+            #np.savez("/shared_home/Ziyang/Cluster_Finder/realisation_1/cov/ell_spec_tensor_"+self.save_label+".npz", ell_vec = ell_vec, spec_tensor = spec_tensor)
             pix_d = maps.degrade_pix(pix,new_shape)
             ell_map = maps.rmap(pix_d).get_ell()
+            #np.save("/shared_home/Ziyang/Cluster_Finder/realisation_1/cov/ell_map",ell_map)
             cov_tensor = interp_cov(ell_map,ell_vec,spec_tensor,interp_type=interp_type)
       
             return cov_tensor
@@ -259,32 +264,42 @@ class cross_spec:
 
             cov_tensor = get_cov_isotropic()
 
-            # import pylab as pl
-            # pl.figure()
-            # pl.imshow(cov_tensor[:,:,0,0].real)
-            # pl.savefig("/home/iz221/szifi/test_files/figures/cov_isotropic.pdf")
-            # pl.show()
-            # quit()
-
         elif cov_type == "anisotropic_gaussian" or cov_type == "anisotropic_boxcar":
 
-            cov_tensor = get_cov_anisotropic(t_map,pix,mask=mask,cov_type=cov_type,cov_kernel_shape=cov_kernel_shape)
+            cov_tensor = get_cov_anisotropic(t_map,pix,mask=mask,cov_type=cov_type,cov_kernel_shape=cov_kernel_shape, save_label = self.save_label+"_"+cov_type)
 
         elif cov_type == "mixed_gaussian" or cov_type == "mixed_boxcar":
 
             cov_tensor_isotropic = get_cov_isotropic()
-            cov_tensor = get_cov_anisotropic(t_map,pix,mask=mask,cov_type=cov_type,cov_kernel_shape=cov_kernel_shape,cov_tensor_isotropic=cov_tensor_isotropic)
-       
+            cov_tensor = get_cov_anisotropic(t_map,pix,mask=mask,cov_type=cov_type,cov_kernel_shape=cov_kernel_shape,cov_tensor_isotropic=cov_tensor_isotropic, save_label = self.save_label+"_"+cov_type)
         return cov_tensor # nx x ny x n_freq x n_freq covariance tensor
 
     def get_inv_cov(self,pix,t_map=None,mask=None,bin_fac=4,new_shape=None,ps=None,
-                    decouple_type="master",interp_type="nearest",cov_type="isotropic",cov_kernel_shape=None):
+                    decouple_type="master",interp_type="nearest",cov_type="isotropic",cov_kernel_shape=None, save_name=""):
+        cov = self.get_cov(pix,t_map=t_map,mask=mask,bin_fac=bin_fac,new_shape=new_shape,
+                            ps=ps,decouple_type=decouple_type,interp_type=interp_type,
+                            cov_type=cov_type,cov_kernel_shape=cov_kernel_shape)
+        # np.savez(save_name, cov=cov)
 
-        return np.linalg.inv(self.get_cov(pix,t_map=t_map,mask=mask,bin_fac=bin_fac,new_shape=new_shape,
-        ps=ps,decouple_type=decouple_type,interp_type=interp_type,
-        cov_type=cov_type,cov_kernel_shape=cov_kernel_shape))
+        inv_cov = np.linalg.inv(cov)
+        return inv_cov
+        # if np.min(inv_cov[:, :, 0, 0])<0:
+        #     print("Modify cov")
+        #     label_x_bad_pixels, label_y_bad_pixels = np.where(inv_cov[:, :, 0, 0]<0)
+        #     I = np.eye(4)
+        #     l = 0.01
+        #     cov_new = np.zeros(cov.shape); cov_new[:] = cov[:]
+        #     for i in range(len(label_x_bad_pixels)):
+        #         xx = label_x_bad_pixels[i]
+        #         yy = label_y_bad_pixels[i]
+        #         mean = np.mean(np.abs(np.diag(cov[xx, yy, :, :])))
+        #         cov_new[xx, yy, :, :] = cov[xx, yy, :, :]+I*l*mean
+        #     inv_cov_new = np.linalg.inv(cov_new)
+        #     return inv_cov_new 
+        # else:
+        #     return inv_cov    
 
-def get_cov_anisotropic(t_map,pix,mask=None,cov_type=None,cov_kernel_shape=None,cov_tensor_isotropic=None):
+def get_cov_anisotropic(t_map,pix,mask=None,cov_type=None,cov_kernel_shape=None,cov_tensor_isotropic=None, save_label=""):
 
     n_freq = t_map.shape[2]
 
@@ -309,25 +324,27 @@ def get_cov_anisotropic(t_map,pix,mask=None,cov_type=None,cov_kernel_shape=None,
                 else:
 
                     ps_isotropic = cov_tensor_isotropic[:,:,i,j]
-
-                cov_tensor[:,:,i,j] = get_anisotropic_ps(t_map[:,:,i],t_map[:,:,j],pix,type=cov_type,mask=mask,cov_kernel_shape=cov_kernel_shape,ps_isotropic=ps_isotropic)
-
+                
+                cov_tensor[:,:,i,j] = get_anisotropic_ps(t_map[:,:,i],t_map[:,:,j],pix,type=cov_type,mask=mask,cov_kernel_shape=cov_kernel_shape,ps_isotropic=ps_isotropic, save_label = str(i)+str(j))
+                
             else:
 
                 cov_tensor[:,:,i,j] = cov_tensor[:,:,j,i]
-
+    # exit()
     return cov_tensor
 
 
-def get_anisotropic_ps(map1,map2,pix,type="boxcar",mask=None,cov_kernel_shape=None,ps_isotropic=None):
+def get_anisotropic_ps(map1,map2,pix,type="boxcar",mask=None,cov_kernel_shape=None,ps_isotropic=None, save_label = ""):
         
         power_spectrum = np.real(np.conjugate(maps.get_fft(map1*mask,pix))*maps.get_fft(map2*mask,pix))
-
+        #np.savez("/shared_home/Ziyang/Cluster_Finder/realisation_1/cov/ps", ps_isotropic=ps_isotropic, power_spectrum = power_spectrum);
+        #ps_isotropic = np.ones(ps_isotropic.shape)
         if ps_isotropic is not None:
-
-            power_spectrum = maps.reshape_ell_matrix(power_spectrum, ps_isotropic.shape)
-            power_spectrum = power_spectrum/ps_isotropic
-
+            power_spectrum_0 = maps.reshape_ell_matrix(power_spectrum, ps_isotropic.shape)
+            gaussian_sigma = np.array(cov_kernel_shape)
+            ps_isotropic = np.fft.ifftshift(ndimage.gaussian_filter(np.fft.fftshift(ps_isotropic),sigma=gaussian_sigma,mode="reflect")).real
+            power_spectrum = power_spectrum_0/ps_isotropic
+            # np.savez("/shared_home/Ziyang/Cluster_Finder/realisation_1/cov/ps_before_smooth_"+save_label+".npz", power_spectrum=power_spectrum_0, power_spectrum_iso=power_spectrum, ps_isotropic=ps_isotropic)
         if type == "anisotropic_boxcar" or type == "mixed_boxcar":
 
             kernel = np.ones(cov_kernel_shape)/(cov_kernel_shape[0]*cov_kernel_shape[1])
@@ -336,7 +353,9 @@ def get_anisotropic_ps(map1,map2,pix,type="boxcar",mask=None,cov_kernel_shape=No
         elif type == "anisotropic_gaussian" or type == "mixed_gaussian":
 
             gaussian_sigma = np.array(cov_kernel_shape)
+            #np.save("/shared_home/Ziyang/Cluster_Finder/realisation_1/cov/ps_before_smooth_"+save_label+".npy", power_spectrum)
             power_spectrum = np.fft.ifftshift(ndimage.gaussian_filter(np.fft.fftshift(power_spectrum),sigma=gaussian_sigma,mode="reflect")).real
+            #np.save("/shared_home/Ziyang/Cluster_Finder/realisation_1/cov/ps_after_smooth_"+save_label+".npy", power_spectrum)
 
         else:
 
@@ -344,8 +363,9 @@ def get_anisotropic_ps(map1,map2,pix,type="boxcar",mask=None,cov_kernel_shape=No
             power_spectrum = None
 
         if ps_isotropic is not None:
-
+            # np.savez("/shared_home/Ziyang/Cluster_Finder/realisation_1/cov/ps_after_smooth_"+save_label+".npz", power_spectrum=power_spectrum*ps_isotropic, power_spectrum_iso=power_spectrum, )
             power_spectrum = power_spectrum*ps_isotropic
+            
 
         return power_spectrum
 

@@ -2,6 +2,7 @@ import numpy as np
 import healpy as hp
 from astropy.io import fits
 from szifi import params, sed
+import h5py
 
 class experiment:
 
@@ -56,6 +57,37 @@ class experiment:
             self.FWHM = np.array([2.2,1.4])
             self.noise_levels = np.array([33.,27.]) #Guess, based on Fig. 14 of https://arxiv.org/pdf/2007.07290.pdf
 
+        elif self.experiment_name == "ACT_DR6": #as used in Hilton et al. 2020. Why not 220 GHz?
+
+            self.nu_eff = np.array([90.,150.,220])*1e9
+            self.FWHM = np.array([1.42, 2.07, 1.01])
+            self.noise_levels = np.array([8.4, 8.9, 43]) 
+
+            self.beams = []
+            beam_pa_freqs = [[5, "f090"],[6, "f150"],[4, "f220"]]
+            for i in range(0,len(self.nu_eff)):
+                pa, freq = beam_pa_freqs[i]
+                beamfile = "/shared_home/Ziyang/data/ACT_DR6_repeat/beams/beam_"+freq+"_tform.txt"
+                d = np.loadtxt(beamfile)
+                self.beams.append(d[:,1]/d[0,1])
+                # self.beams.append(beams_file[indices_beams[i]].data[0][0])
+            # https://arxiv.org/pdf/2503.14451v1
+            self.tsz_sed = np.array([-4.191936e6,-2.6336e6,3.9226e5]) #from ACT bandpass 
+
+        elif self.experiment_name == "SO_iso_deep56":
+            self.nu_eff = np.array([93., 145])*1e9
+            self.tsz_sed = np.array([-4.2840e6, -2.7685e6])
+            self.FWHM = np.array([2.2,1.4])
+            self.noise_levels = np.array([12, 14]) # inpaint
+
+            freqs = ["090", "150"]
+            self.beams = []
+            for i in range(len(freqs)):
+                beamfile_iso = "/shared_home/Ziyang/data/LAT_iso_deep56/beam/Beam_f"+freqs[i]+"_1756699200_20000000000_Interp_Extended_f"+freqs[i]+"_all_tform_format.txt"
+                d = np.loadtxt(beamfile_iso)
+                self.beams.append(d[:, 1]/d[0, 1])
+            
+
         elif self.experiment_name == "SObaseline_simple": #from https://arxiv.org/pdf/1808.07445.pdf
 
             # self.nu_eff = np.array([27.,39.,93.,145.,225.,278.])*1e9
@@ -69,6 +101,34 @@ class experiment:
             self.noise_levels = np.array([8.,10.,22.,54.])
             self.MJysr2muK = np.array([2.0676e3,3.371e3,1.7508e4,6.9653e5])
             self.tsz_sed = np.array([-4.2840e6,-2.7685e6,3.1517e5,2.7314e6])
+            
+        # elif self.experiment_name == "SO_iso_f090":
+        #     self.nu_eff = np.array([93.])*1e9
+        #     self.tsz_sed = np.array([-4.2840e6])
+        #     self.FWHM = np.array([2.2])
+        #     self.noise_levels = np.array([25]) 
+
+        #     beamfile_iso = "/shared_home/Ziyang/data/LAT_iso/beam_30_gauss_tform.txt"
+        #     self.beams = [np.loadtxt(beamfile_iso)[:, 1]]
+
+        # elif self.experiment_name == "SO_iso_deep56":
+        #     self.nu_eff = np.array([93.,145.,225.,278.])*1e9
+        #     self.FWHM = np.array([2.2,1.4,1.,0.9])
+        #     #not sure
+        #     self.noise_levels = np.array([12., 15., 33., 81.])
+        #     self.MJysr2muK = np.array([2.0676e3,3.371e3,1.7508e4,6.9653e5])
+        #     self.tsz_sed = np.array([-4.2840e6,-2.7685e6,3.1517e5,2.7314e6])
+
+        #     for i in range(0,len(self.nu_eff)):
+        #         pa, freq = beam_pa_freqs[i]
+        #         beamfile = "/shared_home/Ziyang/data/ACT_DR6_repeat/beams/beam_"+freq+"_tform.txt"
+        #         d = np.loadtxt(beamfile)
+        #         self.beams.append(d[:,1]/d[0,1])
+
+        #     beamfile_iso = "/shared_home/Ziyang/data/LAT_iso/beam_30_gauss_tform.txt"
+        #     self.beams = [np.loadtxt(beamfile_iso)[:, 1]]
+
+            
 
         elif self.experiment_name == "SOgoal_simple": #from https://arxiv.org/pdf/1808.07445.pdf
 
@@ -127,6 +187,38 @@ class experiment:
 
                 self.transmission_list.append(transmission[1:])
                 self.nu_transmission_list.append(nu[1:])
+                
+        if self.experiment_name == "ACT_DR6":
+            bandpass_file = "/shared_home/Ziyang/data/ACT_DR6_repeat/ACT_DR6_maps/bandpass/AdvACT_Passbands.h5"
+            band_names = [90, 150, 220]
+            self.transmission_list = []
+            self.nu_transmission_list = [] #in Hz
+            with h5py.File(bandpass_file, "r") as f:
+                for i in range(len(band_names)):
+                    if band_names[i] == 90:
+                        integration_bounds = f['PA5_f090']["integration_bounds"][:]
+                        frequencies = f['PA5_f090']["frequencies"][:]
+                        mean_band = f['PA6_f090']["mean_band"][:]
+                        
+                    if band_names[i] == 150:
+                        integration_bounds = f['PA5_f150']["integration_bounds"][:]
+                        frequencies = f['PA5_f150']["frequencies"][:]
+                        mean_band = f['PA6_f150']["mean_band"][:]
+                        
+                    if band_names[i] == 220:
+                        integration_bounds = f['PA4_f220']["integration_bounds"][:]
+                        frequencies = f['PA4_f220']["frequencies"][:]
+                        mean_band = f['PA4_f220']["mean_band"][:]
+                        
+                    indice  = np.where((frequencies>integration_bounds[0])*(frequencies<integration_bounds[1]))
+                
+                    self.nu_transmission_list.append(frequencies[indice]*1e9) #GHz
+                    self.transmission_list.append(mean_band[indice])
+                    # print(frequencies, mean_band)
+                    # print(frequencies[indice], mean_band[indice])
+                    
+                                                      
+                
 
 class websky_conversions:
 

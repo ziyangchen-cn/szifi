@@ -74,16 +74,91 @@ class experiment:
             # https://arxiv.org/pdf/2503.14451v1
             self.tsz_sed = np.array([-4.191936e6,-2.6336e6,3.9226e5]) #from ACT bandpass 
 
+        elif self.experiment_name == "ACT_DR6_2_freq": #as used in Hilton et al. 2020. Why not 220 GHz?
+
+            self.nu_eff = np.array([90.,150.])*1e9
+            self.FWHM = np.array([1.42, 2.07, ])
+            self.noise_levels = np.array([8.4, 8.9,]) 
+
+            self.beams = []
+            beam_pa_freqs = [[5, "f090"],[6, "f150"],[4, "f220"]]
+            for i in range(2):
+                pa, freq = beam_pa_freqs[i]
+                beamfile = "/shared_home/Ziyang/data/ACT_DR6_repeat/beams/beam_"+freq+"_tform.txt"
+                d = np.loadtxt(beamfile)
+                self.beams.append(d[:,1]/d[0,1])
+                # self.beams.append(beams_file[indices_beams[i]].data[0][0])
+            # https://arxiv.org/pdf/2503.14451v1
+            self.tsz_sed = np.array([-4.191936e6,-2.6336e6]) #from ACT bandpass 
+
+
         elif self.experiment_name == "SO_iso_deep56":
             self.nu_eff = np.array([93., 145])*1e9
-            self.tsz_sed = np.array([-4.2840e6, -2.7685e6])
+            self.tsz_sed = np.array([-4281889.241778137, -2745933.338139288]) # np.array([-4.2840e6, -2.7685e6])
             self.FWHM = np.array([2.2,1.4])
             self.noise_levels = np.array([12, 14]) # inpaint
 
-            freqs = ["090", "150"]
+            freqs = ["f090", "f150"]
             self.beams = []
             for i in range(len(freqs)):
-                beamfile_iso = "/shared_home/Ziyang/data/LAT_iso_deep56/beam/Beam_f"+freqs[i]+"_1756699200_20000000000_Interp_Extended_f"+freqs[i]+"_all_tform_format.txt"
+                beamfile_iso = params_szifi["path_data"]+"beams/beam_allarrays_"+freqs[i]+"_tform.txt"
+                #Beam_f"+freqs[i]+"_1756699200_20000000000_Interp_Extended_f"+freqs[i]+"_all_tform_format.txt"
+                d = np.loadtxt(beamfile_iso)
+                self.beams.append(d[:, 1]/d[0, 1])
+                
+        # elif self.experiment_name == "SO_iso_deep56_tube":
+        #     self.nu_eff = np.array([93., 145])*1e9
+        #     self.tsz_sed = np.array([-4281889.241778137, -2745933.338139288]) # np.array([-4.2840e6, -2.7685e6])
+        #     self.FWHM = np.array([2.2, 1.4])
+        #     self.noise_levels = np.array([12, 14]) # inpaint
+
+        #     freqs = ["f090", "f150"]
+        #     self.beams = []
+        #     for i in range(len(freqs)):
+        #         beamfile_iso = params_szifi["path_data"]+"beams/beam_"+params_szifi["map_name"]+"_cmb_tform.txt"
+        #         d = np.loadtxt(beamfile_iso)
+        #         self.beams.append(d[:, 1]/d[0, 1])
+        elif self.experiment_name == "SO_iso_deep56_tube_f090":
+            self.nu_eff = np.array([93.])*1e9
+            self.tsz_sed = np.array([-4281889.241778137]) # np.array([-4.2840e6, -2.7685e6])
+            self.FWHM = np.array([2.2,])
+            self.noise_levels = np.array([12,]) # inpaint
+
+            freqs = ["f090"]
+            self.beams = []
+            for i in range(len(freqs)):
+                beamfile_iso = params_szifi["path_data"]+"beams/beam_"+params_szifi["map_name"]+"_cmb_tform.txt"
+                d = np.loadtxt(beamfile_iso)
+                self.beams.append(d[:, 1]/d[0, 1])
+        elif self.experiment_name == "SO_iso_deep56_tube_f150":
+            self.nu_eff = np.array([145])*1e9
+            self.tsz_sed = np.array([ -2745933.338139288]) # np.array([-4.2840e6, -2.7685e6])
+            self.FWHM = np.array([1.4])
+            self.noise_levels = np.array([14]) # inpaint
+
+            freqs = ["f150"]
+            self.beams = []
+            for i in range(len(freqs)):
+                beamfile_iso = params_szifi["path_data"]+"beams/beam_"+params_szifi["map_name"]+"_cmb_tform.txt"
+                d = np.loadtxt(beamfile_iso)
+                self.beams.append(d[:, 1]/d[0, 1])
+
+        elif self.experiment_name == "SO_iso_deep56_beam2":
+            print("\n\nSO_iso_deep56_beam2\n\n")
+            self.nu_eff = np.array([93., 145])*1e9
+            self.tsz_sed = np.array([-4281889.241778137, -2745933.338139288]) # np.array([-4.2840e6, -2.7685e6])
+            self.FWHM = np.array([2.2,1.4])
+            self.noise_levels = np.array([12, 14]) # inpaint
+
+            freqs = ["f090", "f150"]
+            paths = ["/shared_home/Ziyang/data/LAT_iso_deep56/another_beam_saianeesh/profiles_v1r1/data/band/f090/\
+window_f090_1756699200_20000000000.txt", "/shared_home/Ziyang/data/LAT_iso_deep56/another_beam_saianeesh/profiles_v1r1/data/band/f150/\
+window_f150_1756699200_20000000000.txt"]
+            self.beams =[]
+            
+            for i in range(len(freqs)):
+                beamfile_iso =paths[i]
+                #Beam_f"+freqs[i]+"_1756699200_20000000000_Interp_Extended_f"+freqs[i]+"_all_tform_format.txt"
                 d = np.loadtxt(beamfile_iso)
                 self.beams.append(d[:, 1]/d[0, 1])
             

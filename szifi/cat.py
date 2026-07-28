@@ -55,7 +55,7 @@ class cluster_catalogue:
 
             if len(self.catalogue[key]) > 0:
 
-                self.catalogue[key] = self.catalogue[key][indices]
+                self.catalogue[key] = np.asarray(self.catalogue[key])[indices]
 
 
     def get_lonlat(self,n_side,i,pix):
@@ -268,6 +268,58 @@ fac_theta_500=1,merge_radius_type="theta_500"):
         #    print(i,len(indices_remove),catalogue_merged.catalogue["q_opt"])
 
         ret = catalogue_merged
+    elif mode == "masking_max_fast":
+        from sklearn.neighbors import BallTree
+
+        lon = catalogue.catalogue["lon"]
+        lat = catalogue.catalogue["lat"]
+        q   = catalogue.catalogue["q_opt"]
+        th500 = catalogue.catalogue["theta_500"]
+
+        order = np.argsort(q)[::-1]
+
+        # per-detection masking radius in radians
+        radius_rad = np.deg2rad(np.maximum(fac_theta_500 * th500, radius_arcmin) / 60.)
+
+        # neighbour lists precomputed once; strict < comparison applied below,
+        # the 1.0001 margin only guards the tree query's boundary rounding
+        coords = np.vstack([np.deg2rad(lat), np.deg2rad(lon)]).T
+        tree = BallTree(coords, metric="haversine")
+        neighbours, distances = tree.query_radius(coords, r=radius_rad*1.0001,
+                                                  return_distance=True)
+
+        keep = []
+        masked = np.zeros(len(lon), dtype=bool)
+
+        merged_indices_all = []
+        host_id_all = []
+
+        for idx in tqdm(order):
+            if masked[idx]:
+                continue
+            host_id = len(keep)
+            keep.append(idx)
+
+            nearby = neighbours[idx][distances[idx] < radius_rad[idx]]
+
+            # only detections not already masked are newly merged by this host
+            newly_masked = nearby[~masked[nearby]]
+
+            # exclude the host itself
+            merged_indices = newly_masked[newly_masked != idx]
+            if len(merged_indices) > 0:
+                merged_indices_all.extend(merged_indices)
+                host_id_all.extend([host_id] * len(merged_indices))
+
+            masked[nearby] = True
+
+        ret = get_catalogue_indices(catalogue, keep)
+
+        cat_merged = get_catalogue_indices(catalogue, merged_indices_all)
+        cat_merged.catalogue["host_id"] = np.array(host_id_all)
+        if return_merge_flag:
+            ret = (ret, cat_merged)
+
 
     return ret
 
@@ -296,8 +348,8 @@ def get_distance_sphere_lonlat(coords1,coords2):
 #Cross-match cluster catalogues. catalogue_ref is the reference catalogue, whose ordering is
 #kept.
 
-def identify_clusters(catalogue_1,catalogue_2,id_radius_arcmin=15.,lonlat=False,
-mode="close+highest_q",sort=True,unique=False):
+def identify_clusters(catalogue_1,catalogue_2, id_radius_arcmin=15.,lonlat=False,
+mode="close+highest_q", sort=True, unique=False):
 
     catalogue_1_new = copy.deepcopy(catalogue_1)
     catalogue_2_new = cluster_catalogue()
@@ -479,8 +531,12 @@ def identify_clusters_fast(
         neighbours = tree.query_radius(coords1, r=theta)
 
     # -----------------------------
-    # Matching loop (logic unchanged)
+    # Matching loop (decision only; catalogues built vectorized below,
+    # avoiding the per-row append that made this O(N^2))
     # -----------------------------
+    match_idx = np.full(n_clusters_1, -1, dtype=np.int64)
+    q2 = catalogue_2.catalogue["q_opt"]
+
     for i in tqdm(range(n_clusters_1)):
 
         indices_closest = neighbours[i]
@@ -493,9 +549,7 @@ def identify_clusters_fast(
         if len(indices_closest) != 0:
 
             if mode == "close+highest_q":
-                index_max = indices_closest[
-                    np.argmax(catalogue_2.catalogue["q_opt"][indices_closest])
-                ]
+                index_max = indices_closest[np.argmax(q2[indices_closest])]
 
             elif mode == "closest":
                 if lonlat in [True, "equatorial"]:
@@ -510,39 +564,26 @@ def identify_clusters_fast(
 
                 index_max = indices_closest[np.argmin(dist)]
 
-            # Append matched object
-            cat_temp = cluster_catalogue()
-            for key in catalogue_2.catalogue.keys():
-                if len(catalogue_2.catalogue[key]) > 0:
-                    cat_temp.catalogue[key] = catalogue_2.catalogue[key][index_max]
-
-            catalogue_2_new.append(cat_temp, append_keys="new")
+            match_idx[i] = index_max
             indices_catalogue_2[index_max] = 1.
 
-        else:
-            # No match → fill with -1
-            cat_temp = cluster_catalogue()
-            for key in catalogue_2.catalogue.keys():
-                if len(catalogue_2.catalogue[key]) > 0:
-                    cat_temp.catalogue[key] = np.array([-1])
-            catalogue_2_new.append(cat_temp, append_keys="new")
-
     # -----------------------------
-    # Add unmatched catalogue_2 objects
+    # Build matched rows (-1 where no match) + append unmatched catalogue_2 objects
     # -----------------------------
     indices = np.where(indices_catalogue_2 == 0.)[0]
+    has_match = match_idx >= 0
+    safe_idx = np.where(has_match, match_idx, 0)
 
-    cat_temp_1 = cluster_catalogue()
-    cat_temp_2 = cluster_catalogue()
-    for key in catalogue_1.catalogue.keys():
-        if len(catalogue_1.catalogue[key]) > 0:
-            cat_temp_1.catalogue[key] = - np.ones(len(indices))
     for key in catalogue_2.catalogue.keys():
         if len(catalogue_2.catalogue[key]) > 0:
-            cat_temp_2.catalogue[key] = np.array([catalogue_2.catalogue[key][indices]])
-    
-    catalogue_1_new.append(cat_temp_1, append_keys="new")
-    catalogue_2_new.append(cat_temp_2, append_keys="new")
+            vals = np.asarray(catalogue_2.catalogue[key])
+            row = vals[safe_idx].copy()
+            row[~has_match] = -1
+            catalogue_2_new.catalogue[key] = np.append(row, vals[indices])
+
+    for key in catalogue_1.catalogue.keys():
+        if len(catalogue_1.catalogue[key]) > 0:
+            catalogue_1_new.catalogue[key] = np.append(catalogue_1_new.catalogue[key], -np.ones(len(indices)))
     
 
     # for i in tqdm(indices):

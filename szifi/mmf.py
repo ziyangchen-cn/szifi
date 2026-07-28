@@ -1,6 +1,7 @@
 import numpy as np
 import scipy.signal as sg
-from szifi import params, maps, model, cat, spec, utils, sed
+from scipy import ndimage
+from szifi import params, maps, model, cat, spec, utils, sed, peaks
 import warnings, os
 warnings.filterwarnings("ignore")
 import gzip
@@ -123,6 +124,8 @@ class cluster_finder:
             if self.params_szifi["extraction_mode"] == "fixed":
 
                 self.catalogue_fixed = self.data_file["catalogue_input"][field_id]
+                # self.catalogue_fixed = cat.get_catalogue_indices(self.catalogue_fixed, self.catalogue_fixed.catalogue["m_500"]>5)
+                # print(self.catalogue_fixed.get_n_clusters())
 
             if self.params_szifi["tile_type"] == "car":
 
@@ -201,7 +204,7 @@ class cluster_finder:
 
                 if self.rank == 0:
 
-                    print("Noise it",i)
+                    print("\n\n\n Noise it",i)
 
                 if not np.any(self.mask_select):
 
@@ -234,7 +237,7 @@ class cluster_finder:
 
                     self.t_noi = maps.filter_tmap(self.t_noi,self.pix,self.params_szifi["lrange"],indices_filter=self.indices_filter)
 
-                
+                print("it", i, np.std(self.t_noi), np.sum(self.mask_point))
                 #Estimate channel cross-spectra
 
                 lmax1d = self.params_szifi["powspec_lmax1d"]
@@ -275,18 +278,7 @@ class cluster_finder:
                 new_shape=new_shape, 
                 )
 
-                if self.params_szifi["path_diagnosis"]:
-                    
-                    # cov is just for test
-                    cov = self.cspec.get_cov(self.pix,
-                                                          t_map=self.t_noi,
-                                                          interp_type=self.params_szifi["interp_type"],
-                                                          bin_fac=bin_fac,
-                                                          new_shape=new_shape,
-                                                          mask=self.mask_ps,
-                                                          cov_type=self.params_szifi["cov_type"],
-                                                          cov_kernel_shape=self.params_szifi["cov_kernel_shape"])#, save_name =save_name)
-                    #np.savez(self.params_szifi["path_diagnosis"]+"cov_"+field_id+"_it"+str(i)+"_apo"+str(self.params_szifi["aposcale"]), cov = cov, t_noi = self.t_noi, pix = self.pix, new_shape=new_shape, mask=self.mask_ps,)
+                
                 
 #                 print("save", self.params_szifi["path_template"]+"input_"+str(field_id)+"_lmax"+str(lmax1d)+".npz")
 #                 np.savez(self.params_szifi["path_template"]+"input_"+str(field_id)+"_lmax"+str(lmax1d)+".npz", pix = self.pix, t_map=self.t_noi, new_shape=new_shape, mask=self.mask_ps, ell=self.cspec.ell_vec, spec_tensor=self.cspec.spec_tensor,
@@ -305,7 +297,18 @@ class cluster_finder:
                                                       cov_kernel_shape=self.params_szifi["cov_kernel_shape"])#, save_name =save_name)
                 
                 
-                
+                if self.params_szifi["path_diagnosis"]:
+                    
+                    # cov is just for test
+                    cov = self.cspec.get_cov(self.pix,
+                                                          t_map=self.t_noi,
+                                                          interp_type=self.params_szifi["interp_type"],
+                                                          bin_fac=bin_fac,
+                                                          new_shape=new_shape,
+                                                          mask=self.mask_ps,
+                                                          cov_type=self.params_szifi["cov_type"],
+                                                          cov_kernel_shape=self.params_szifi["cov_kernel_shape"])#, save_name =save_name)
+                    np.savez(self.params_szifi["path_diagnosis"]+"cov_"+field_id+"_it"+str(i)+"_apo"+str(self.params_szifi["aposcale"]), cov = cov, t_noi = self.t_noi, pix = self.pix, new_shape=new_shape, mask=self.mask_ps, inv_cov = self.inv_cov)
 
             
                 del self.mask_point
@@ -400,6 +403,7 @@ class cluster_finder:
                 
 
                 #SZiFi in cluster finding mode: blind cluster detection
+                
 
                 if self.params_szifi["extraction_mode"] == "find" or (self.params_szifi["extraction_mode"] == "fixed" and self.params_szifi["iterative"] == True):
 
@@ -426,7 +430,7 @@ class cluster_finder:
                 #SZiFi in fixed mode: extraction for an input catalogue
 
                 if (self.params_szifi["extraction_mode"] == "fixed"):
-
+                    
                     con1 = (self.params_szifi["iterative"] == True and i > 0)
                     con2 = (self.params_szifi["iterative"] == False)
                     con3 = (self.params_szifi["iterative"] == True and len(self.results.catalogues["catalogue_find_" + str(i)].catalogue["q_opt"]) == 0.)
@@ -439,15 +443,31 @@ class cluster_finder:
 
                             print("Extraction for input catalogue")
 
-                        self.filtered_maps.extract_at_true_values(self.t_obs,
-                        self.catalogue_fixed)
-                        catalogue_obs = self.filtered_maps.catalogue_true_values
+                        # Fixed mode extraction: choose fast interpolation or full computation
+                        # Interpolation uses pre-computed q_tensor from find_clusters (4.4x speedup)
+                        # Full computation redoes MMF for each cluster (slow but more accurate)
+                        if self.params_szifi.get("use_q_tensor_interp", False) and \
+                           hasattr(self.filtered_maps, 'q_tensor'):
+                            # Fast mode: 3D interpolation on q_tensor from find_clusters
+                            catalogue_obs = self.filtered_maps.extract_at_true_values_interp(
+                                self.catalogue_fixed,
+                                q_tensor=self.filtered_maps.q_tensor,
+                                y_tensor=self.filtered_maps.y_tensor,
+                                theta_vec=self.theta_500_vec,
+                                pix=self.pix,
+                                wcs=self.wcs
+                            )
+                        else:
+                            # Original slow method: recompute MMF for each cluster
+                            self.filtered_maps.extract_at_true_values(self.t_obs,
+                            self.catalogue_fixed)
+                            catalogue_obs = self.filtered_maps.catalogue_true_values
 
 
                         self.results.catalogues["catalogue_fixed_" + str(i)] = catalogue_obs
 
                         print("Fixed SNR",np.flip(np.sort(self.results.catalogues["catalogue_fixed_" + str(i)].catalogue["q_opt"])))
-                        
+                print(self.results.catalogues.keys())
 
                 #Extract true SNR
 
@@ -471,23 +491,22 @@ class cluster_finder:
 
                         print("q true",np.flip(np.sort(self.results.catalogues["catalogue_true_" + str(i)].catalogue["q_opt"])))
 
+                print(494, "it_max", self.params_szifi["max_it"])
                 #Several breaking conditions
                 if (self.params_szifi["extraction_mode"] == "find"):
                     self.n_clusters = len(self.results.catalogues["catalogue_find_" + str(i)].catalogue["q_opt"])  + \
                                       len(self.results.catalogues["catalogue_find_buffer_" + str(i)].catalogue["q_opt"])
                 elif (self.params_szifi["extraction_mode"] == "fixed"):
-                    self.n_clusters = len(self.results.catalogues["catalogue_fixed_" + str(i)].catalogue["q_opt"])
+                    # self.n_clusters = len(self.results.catalogues["catalogue_fixed_" + str(i)].catalogue["q_opt"])
+                    self.n_clusters = self.catalogue_fixed.get_n_clusters()
 
                 if self.n_clusters == 0.:
-
                     break
 
                 if self.params_szifi["iterative"] == False:
-
                     break
 
                 if i == self.params_szifi["max_it"]:
-
                     break
 
                 #Cluster masking for iterative covariance estimation
@@ -498,7 +517,6 @@ class cluster_finder:
                 clusters_masked_old = cat.apply_q_cut(clusters_masked_old,self.params_szifi["q_th_noise"])
 
                 if len(clusters_masked_new.catalogue["q_opt"]) == 0:
-
                     break
 
                 if self.params_szifi["tile_type"] == "healpix":
@@ -512,9 +530,8 @@ class cluster_finder:
                 clusters_masked_old_id,clusters_masked_new_id = cat.identify_clusters(clusters_masked_old,clusters_masked_new,lonlat=lonlat)
 
 
-                if np.all(clusters_masked_old_id.catalogue["q_opt"]) != -1 and i > 0:
-
-                    break
+                # if np.all(clusters_masked_old_id.catalogue["q_opt"] != -1) and i > 0:
+                #     break
 
                 mask_cluster = get_cluster_mask(self.pix,
                 self.results_for_masking,
@@ -625,7 +642,15 @@ class filter_maps:
             t_obs = maps.multiply_t(self.mask_map,t_obs)
             t_obs = maps.filter_tmap(t_obs,self.pix,self.params["lrange"],indices_filter=self.indices_filter)
         n_theta = len(self.theta_500_vec)
-        detect_peaks_maxima_lomem = (self.params["detection_method"] == "maxima_lomem") and (n_theta > 3)
+        # detect_peaks_maxima_lomem = (self.params["detection_method"] == "maxima_lomem") and (n_theta > 3)
+        # Low-memory peak finding: only use if NOT in q_tensor interpolation mode
+        # maxima_lomem stores only 3 theta layers (rolling window) to save memory
+        # BUT q_tensor interpolation needs full (nx, ny, n_theta) array
+        # So when use_q_tensor_interp=True, force standard q_tensor storage
+        detect_peaks_maxima_lomem = (self.params["detection_method"] == "maxima_lomem") \
+                                     and (n_theta > 3) \
+                                     and (not self.params.get("use_saddle_consolidation", False)) \
+                                     and (not self.params.get("use_q_tensor_interp", False))
 
         
         if detect_peaks_maxima_lomem:
@@ -634,7 +659,7 @@ class filter_maps:
 
             for mask_name in self.mask_names_finding:
 
-                self.peak_info[mask_name] = np.empty((5,0),dtype=np.float32)
+                self.peak_info[mask_name] = np.empty((13,0),dtype=np.float32)
 
             self.q_tensor = np.zeros((self.pix.nx,self.pix.ny,3),dtype=self.params["map_dtype"])
             self.y_map_last = None
@@ -729,6 +754,7 @@ class filter_maps:
                 self.pix,
                 self.params["lrange"],
                 indices_filter=self.indices_filter)
+                
 
                 if self.params["save_and_load_template"] == True:
 
@@ -741,8 +767,17 @@ class filter_maps:
                 t_tem_norm = np.load(template_norm_name,allow_pickle=True)[()]
 
             path_save = ""
-            if self.params["path_diagnosis"] and "n_theta" in self.params:
-                if self.i_it==1 and j in self.params["n_theta"]:
+            # If user provided a filters output dir in params (minimal per-tile save), use it.
+            # The saved file is a small .npz produced inside get_mmf_q_map (filter, tem, pix).
+            filters_dir = self.params.get("path_filters", "")
+            if filters_dir:
+                try:
+                    os.makedirs(filters_dir, exist_ok=True)
+                except Exception:
+                    pass
+                path_save = os.path.join(filters_dir, f"filter_{self.field_id}_nth{j}_it{self.i_it}.npz")
+            elif self.params["path_diagnosis"] and "n_theta" in self.params:
+                if j in self.params["n_theta"]:
                     path_save = self.params["path_diagnosis"]+"filter_"+self.field_id+"_l"+str(self.lmax)+"_nth"+str(j)+"_it"+str(self.i_it)
 
                 
@@ -800,9 +835,9 @@ class filter_maps:
 
                     for mask_name in self.mask_names_finding:
 
-                        q_opt,y0_est,maxs_idx = make_detections2(qm,self.y_map_last,self.mask_peak_finding_dict[mask_name],q_th,zmax)
+                        q_opt,y0_est,maxs_idx, refined = make_detections2(qm,self.y_map_last,self.mask_peak_finding_dict[mask_name],q_th,zmax, self.params)
 
-                        self.save_detections(q_opt, y0_est,maxs_idx,mask_name,j-1)
+                        self.save_detections(q_opt, y0_est,maxs_idx,mask_name,j-1, refined)
 
                     if j == n_theta-1:
 
@@ -811,8 +846,8 @@ class filter_maps:
 
                         for mask_name in self.mask_names_finding:
 
-                            q_opt,y0_est,maxs_idx = make_detections2(qm,y_map,self.mask_peak_finding_dict[mask_name],q_th,zmax)
-                            self.save_detections(q_opt,y0_est,maxs_idx,mask_name,j)
+                            q_opt,y0_est,maxs_idx, refined = make_detections2(qm,y_map,self.mask_peak_finding_dict[mask_name],q_th,zmax, self.params)
+                            self.save_detections(q_opt,y0_est,maxs_idx,mask_name,j, refined)
 
                     self.q_tensor = np.roll(self.q_tensor,-1,axis=2)
                     self.y_map_last = y_map
@@ -847,11 +882,15 @@ class filter_maps:
         for mask_name in self.mask_names_finding:
 
             if detect_peaks_maxima_lomem:
-                q_opt, y0_est, theta_est, inds0, inds1 = self.peak_info[mask_name]
+                q_opt, y0_est, theta_est, inds0, inds1,\
+                i_interp, j_interp, q_interp, y0_interp, i_com, j_com, q_com, y0_com = self.peak_info[mask_name]
                 inds0, inds1 = inds0.astype(np.int64), inds1.astype(np.int64)
                 #print(1);exit()
                 x_est = x_coord[(inds0, inds1)]
                 y_est = y_coord[(inds0, inds1)]
+
+                refined = {"i_interp": i_interp,"j_interp": j_interp,"q_interp": q_interp,"y0_interp": y0_interp,"i_com": i_com,"j_com": j_com,"q_com": q_com,"y0_com": y0_com,}
+
                 
             else:
 
@@ -870,6 +909,8 @@ class filter_maps:
                 q_tensor = apply_mask_peak_finding(self.q_tensor,self.mask_peak_finding_dict[mask_name])
                 indices = make_detections(q_tensor,self.params["q_th"],self.pix,detection_method=self.params["detection_method"])
                 
+
+                
                 q_opt = q_tensor[indices]
                 y_tensor = apply_mask_peak_finding(self.y_tensor,self.mask_peak_finding_dict[mask_name])
                 y0_est = y_tensor[indices]
@@ -877,6 +918,30 @@ class filter_maps:
                 y_est = y_coord[(indices[0],indices[1])]
                 theta_est = self.theta_500_vec[indices[2]]
                 #n_detect = len(q_opt)
+
+                
+                # interpolation in blind mode
+                peak_i = np.asarray(indices[0], dtype=np.int64)
+                peak_j = np.asarray(indices[1], dtype=np.int64)
+                theta_idx = np.asarray(indices[2], dtype=np.int64)
+                refined = {"i_interp": peak_i.astype(float),
+                            "j_interp": peak_j.astype(float),
+                            "q_interp": q_opt.copy(),
+                            "y0_interp": y0_est.copy(),
+                            "i_com": peak_i.astype(float),
+                            "j_com": peak_j.astype(float),
+                            "q_com": q_opt.copy(),
+                            "y0_com": y0_est.copy(),}
+                
+                for th in np.unique(theta_idx):
+                    sel = theta_idx == th
+                    ref = refine_detection_positions_2d(
+                        q_tensor[:, :, th], y_tensor[:, :, th],
+                        peak_i[sel], peak_j[sel],
+                        self.params["q_th"], self.mask_peak_finding_dict[mask_name], self.params
+                    )
+                    for key in refined:
+                        refined[key][sel] = ref[key]
 
             cat_new = cat.cluster_catalogue()
 
@@ -886,6 +951,15 @@ class filter_maps:
             cat_new.catalogue["pixel_ids"] = [self.field_id]*len(q_opt)
 
             print("Cluster number:", len(q_opt))
+
+            cat_new.catalogue["q_opt_interp"] = refined["q_interp"]
+            cat_new.catalogue["y0_interp"] = refined["y0_interp"]
+            # COM fields disabled (not needed)
+            # cat_new.catalogue["q_opt_com"] = refined["q_com"]
+            # cat_new.catalogue["y0_com"] = refined["y0_com"]
+
+  
+            
             
             if self.params["tile_type"] == "healpix":
 
@@ -898,10 +972,45 @@ class filter_maps:
                 
                 cat_new.catalogue["ra"] = x_est
                 cat_new.catalogue["dec"] = y_est
+
+                dec_interp, ra_interp = enmap.pix2sky(
+                    t_obs[:, :, 0].shape,
+                    self.wcs,
+                    np.array([refined["i_interp"], refined["j_interp"]]),
+                    corner=True,
+                )
+
+                # COM sky coordinates disabled (not needed)
+                # dec_com, ra_com = enmap.pix2sky(
+                #     t_obs[:, :, 0].shape,
+                #     self.wcs,
+                #     np.array([refined["i_com"], refined["j_com"]]),
+                #     corner=True,
+                # )
+
+                cat_new.catalogue["ra_interp"] = ra_interp
+                cat_new.catalogue["dec_interp"] = dec_interp
+                # cat_new.catalogue["ra_com"] = ra_com
+                # cat_new.catalogue["dec_com"] = dec_com
                 
             
             for mask_name_select in self.mask_names_select[mask_name]:
                 if len(cat_new.catalogue["dec"])>0:
+                    # new merge algorithm: 2026-06-20
+                    if self.params.get("use_saddle_consolidation", False):
+                        print("\n use consolidate_saddle_catalogue \n")
+                        cat_new = peaks.consolidate_saddle_catalogue(
+                            cat_new,
+                            q_tensor,                   # line 887
+                            self.theta_500_vec,
+                            self.wcs,
+                            res_arcmin=0.5,             # SO CAR pixel size
+                            q_key="q_opt",
+                            theta_cap_arcmin=4.0,
+                            saddle_depth=2.0,
+                            link_radius_arcmin=12.0,
+                        )
+                    
                     cat_new = cat.apply_mask_select(cat_new,self.mask_select_dict[mask_name_select],self.pix,tile_type=self.params["tile_type"],wcs=self.wcs)
                 self.results[(mask_name, mask_name_select)] = cat_new
         
@@ -910,6 +1019,90 @@ class filter_maps:
         return 0
 
     #Apply MMF for input catalogue
+
+    def extract_at_true_values_interp(self, true_catalogue, q_tensor, y_tensor,
+                                       theta_vec, pix, wcs):
+        """
+        Fast extraction using 3D interpolation on q_tensor from find_clusters.
+
+        Instead of recomputing MMF filters for each cluster (337 × MMF operations),
+        interpolate SNR values directly from pre-computed q_tensor (0 × MMF operations).
+        Speedup: ~4.4x overall (437→100 MMF evaluations with 100-point theta sampling).
+
+        Parameters:
+            true_catalogue: Input cluster catalogue with (ra, dec, theta_500)
+            q_tensor: SNR tensor from find_clusters (nx, ny, n_theta)
+            y_tensor: Flux tensor from find_clusters (nx, ny, n_theta)
+            theta_vec: Array of theta_500 sampling points used in find_clusters
+            pix: Pixelization object
+            wcs: WCS projection (for CAR tiles)
+        """
+        import time
+        from scipy.ndimage import map_coordinates, spline_filter
+        from pixell import enmap
+
+        t_start = time.time()
+        n_clus = len(true_catalogue.catalogue["ra"])
+        q_opt = np.zeros(n_clus)
+        y0_est = np.zeros(n_clus)
+
+        if self.params["tile_type"] != "car":
+            raise NotImplementedError("extract_at_true_values_interp only supports CAR tile_type")
+
+        # Convert (ra, dec) to pixel coordinates
+        ra = true_catalogue.catalogue["ra"]
+        dec = true_catalogue.catalogue["dec"]
+        theta_true = true_catalogue.catalogue["theta_500"]
+
+        pix_coords = enmap.sky2pix(
+            (pix.nx, pix.ny), wcs,
+            np.deg2rad([dec, ra]),
+            corner=True
+        )
+        i_pix = pix_coords[0]
+        j_pix = pix_coords[1]
+
+        # 3D interpolation for each cluster (log-space theta interpolation)
+        theta_idx_arr = np.arange(len(theta_vec))
+        log_theta_vec = np.log(theta_vec)
+        q_tensor_f = spline_filter(q_tensor, order=3, mode='nearest')
+        y_tensor_f = spline_filter(y_tensor, order=3, mode='nearest')
+        print("Interpolate input clusters:")
+        for k in tqdm(range(n_clus)):
+            # Fractional theta index in log space → trilinear interpolation in (x, y, log_theta)
+            theta_float = np.interp(np.log(theta_true[k]), log_theta_vec, theta_idx_arr)
+
+            # 3D interpolation: (i, j, theta_float)
+            coords = np.array([[i_pix[k]], [j_pix[k]], [theta_float]])
+
+            q_opt[k] = map_coordinates(q_tensor_f, coords, order=3, mode='nearest', prefilter=False)[0]
+            y0_est[k] = map_coordinates(y_tensor_f, coords, order=3, mode='nearest', prefilter=False)[0]
+
+        # Build result catalogue
+        catalogue_interp = cat.cluster_catalogue()
+        catalogue_interp.catalogue["q_opt"] = q_opt
+        catalogue_interp.catalogue["y0"] = y0_est
+        catalogue_interp.catalogue["theta_500"] = theta_true
+
+        # Copy other fields
+        for key in true_catalogue.catalogue.keys():
+            if key not in ['q_opt', 'y0', 'theta_500']:
+                catalogue_interp.catalogue[key] = true_catalogue.catalogue[key]
+
+        # true_catalogue (per-tile input mock) has no pixel_ids of its own;
+        # tag with this tile's field_id, matching extract_at_true_values (line ~1215)
+        # and find_clusters (line ~951).
+        catalogue_interp.catalogue["pixel_ids"] = [self.field_id] * n_clus
+
+        self.catalogue_true_values = catalogue_interp
+
+        t_end = time.time()
+        if self.rank == 0:
+            print(f"extract_at_true_values_interp: {n_clus} clusters in {t_end - t_start:.2f}s ({n_clus/(t_end - t_start):.1f} clusters/s)")
+            print("extract_interp_q_opt:", q_opt)
+            
+
+        return catalogue_interp
 
     def extract_at_true_values(self,t_true,true_catalogue):
 
@@ -932,18 +1125,28 @@ class filter_maps:
 
         q_opt = np.zeros((n_clus,len(self.params["comp_to_calculate"])))
         y0_est = np.zeros((n_clus,len(self.params["comp_to_calculate"])))
+        q_opt_intp = np.zeros((n_clus,len(self.params["comp_to_calculate"])))
+        y0_est_intp = np.zeros((n_clus,len(self.params["comp_to_calculate"])))
+        q_opt_subpix = np.zeros((n_clus,len(self.params["comp_to_calculate"])))
+        y0_est_subpix = np.zeros((n_clus,len(self.params["comp_to_calculate"])))
 
         if self.rank == 0:
 
             print("Extracting at true parameters")
 
-        for i in range(0,n_clus):
+        
+
+        for i in tqdm(range(0, n_clus)):
 
             # z = true_catalogue.catalogue["redshift"][i]
             # M_500 = true_catalogue.catalogue["M500c"][i]/10
-
             z = 0.2 #????
-            M_500 = model.get_m_500(true_catalogue.catalogue["theta_500"][i],z,self.cosmology) # 1e15 M_sun
+            if "input_catalogue_theta" in self.params:  # fix filter size in FP mode
+                M_500 = model.get_m_500(self.params["input_catalogue_theta"],z,self.cosmology) # 1e15 M_sun
+            else:
+                M_500 = model.get_m_500(true_catalogue.catalogue["theta_500"][i],z,self.cosmology) # 1e15 M_sun
+
+            # if true_catalogue.catalogue["m_500"][i] < 5:continue
             
         
 
@@ -965,7 +1168,8 @@ class filter_maps:
                 a_matrix = self.params["a_matrix"][self.params["freqs"],:]
                 a_matrix[:,0] = tsz_sed
 
-            q_extracted,y0_extracted,q_map = extract_at_input_value(t_true,
+            q_extracted,y0_extracted,q_extracted_intp,y0_extracted_intp, \
+                q_extracted_subpix, y0_extracted_subpix, q_map = extract_at_input_value(t_true,
             self.inv_cov,
             self.pix,
             self.params["beam"],
@@ -977,6 +1181,9 @@ class filter_maps:
             theta_1[i],
             self.params["lrange"],
             apod_type=self.params["apod_type"],
+            f_sky_apo = self.params["f_sky_apo"],
+            use_subpix_mmf=self.params.get("use_subpix_mmf", False),
+            subpix_shape=self.params.get('subpix_shape', (2, 2)),
             mmf_type=self.params["mmf_type"],
             cmmf_type=self.params["cmmf_type"],
             cmmf_prec=self.cmmf,
@@ -992,14 +1199,23 @@ class filter_maps:
 
             q_opt[i,:] = q_extracted
             y0_est[i,:] = y0_extracted
+            q_opt_intp[i,:] = q_extracted_intp
+            y0_est_intp[i,:] = y0_extracted_intp
+            q_opt_subpix[i,:] = q_extracted_subpix
+            y0_est_subpix[i,:] = y0_extracted_subpix
+            # print("theta_500",true_catalogue.catalogue["theta_500"][i],"SNR",q_extracted, "y0", y0_extracted)
+            # print("ACT", true_catalogue.catalogue["fixed_SNR"][i], true_catalogue.catalogue["fixed_y_c"][i])
+            
 
-            print("theta_500",true_catalogue.catalogue["theta_500"][i],"SNR",q_extracted, "y0", y0_extracted)
-            print("ACT", true_catalogue.catalogue["fixed_SNR"][i], true_catalogue.catalogue["fixed_y_c"][i])
 
         catalogue_at_true_values = cat.cluster_catalogue()
 
         catalogue_at_true_values.catalogue["q_opt"] = q_opt[:,0]
         catalogue_at_true_values.catalogue["y0"] = y0_est[:,0]
+        catalogue_at_true_values.catalogue["q_opt_intp"] = q_opt_intp[:,0]
+        catalogue_at_true_values.catalogue["y0_intp"] = y0_est_intp[:,0]
+        catalogue_at_true_values.catalogue["q_opt_subpix"] = q_opt_subpix[:,0]
+        catalogue_at_true_values.catalogue["y0_subpix"] = y0_est_subpix[:,0]
         catalogue_at_true_values.catalogue["theta_500"] = true_catalogue.catalogue["theta_500"]
         catalogue_at_true_values.catalogue["pixel_ids"] =  [self.field_id]*n_clus
         catalogue_at_true_values.catalogue["m_500"] = true_catalogue.catalogue["m_500"]
@@ -1015,6 +1231,11 @@ class filter_maps:
             catalogue_at_true_values.catalogue["dec"] = true_catalogue.catalogue["dec"]
             catalogue_at_true_values.catalogue["ra"] = true_catalogue.catalogue["ra"]
 
+        for key, value in true_catalogue.catalogue.items():
+
+            catalogue_at_true_values.catalogue["input_" + key] = np.copy(value)
+
+        
         #Extraction of other components
 
         for i in range(1,len(self.params["comp_to_calculate"])):
@@ -1024,22 +1245,29 @@ class filter_maps:
 
         self.catalogue_true_values = catalogue_at_true_values
 
-    def save_detections(self,q_opt,y0_est,maxs_idx,mask_name,j_theta):
+    def save_detections(self,q_opt,y0_est,maxs_idx,mask_name,j_theta, refined):
 
         thetas = np.ones_like(q_opt)*self.theta_500_vec[j_theta]
-        ans = np.vstack([q_opt,y0_est,thetas,maxs_idx.T])
+        ans = np.vstack([q_opt,y0_est,thetas,maxs_idx.T,
+                        refined["i_interp"], refined["j_interp"], refined["q_interp"], refined["y0_interp"],
+                        refined["i_com"], refined["j_com"], refined["q_com"], refined["y0_com"]])
         self.peak_info[mask_name] = np.hstack([self.peak_info[mask_name], ans])
 
 #Apply MMF for input catalogue
 def extract_at_input_value(t_true,inv_cov,pix,beam,M_500,z,cosmology,norm_type,
-theta_0,theta_1,lrange,apod_type=None,mmf_type=None,cmmf_prec=None,cmmf_type=None,
+theta_0,theta_1,lrange,apod_type=None,f_sky_apo=1,mmf_type=None,cmmf_prec=None,cmmf_type=None,
 freqs=None,exp=None,comp_to_calculate=None,profile_type=None,indices_filter=None,
-tile_type="healpix",wcs=None,weights=None):
+tile_type="healpix",wcs=None,weights=None,use_subpix_mmf=False,subpix_shape=(2, 2)):
     print("extract_at_input_value",M_500,z)
     nfw = model.gnfw(M_500,z,cosmology,type=profile_type)
 
     q_opt = np.zeros(len(comp_to_calculate))
     y0_est = np.zeros(len(comp_to_calculate))
+    q_opt_intp = np.zeros(len(comp_to_calculate))
+    y0_est_intp = np.zeros(len(comp_to_calculate))
+    q_opt_subpix = np.zeros(len(comp_to_calculate))
+    y0_est_subpix = np.zeros(len(comp_to_calculate))
+
 
     if mmf_type == "standard" or (mmf_type == "spectrally_constrained" and cmmf_type == "one_dep"):
 
@@ -1073,8 +1301,36 @@ tile_type="healpix",wcs=None,weights=None):
 
     for k in range(0,len(comp_to_calculate)):
 
-        q_map_tem,y_map,std = get_mmf_q_map(t_true,tem,inv_cov,pix,mmf_type=mmf_type,
-        cmmf_prec=cmmf_prec,tem_norm=t_tem_norm,comp=comp_to_calculate[k])
+        if use_subpix_mmf:
+            print("Using subpixel MMF")
+
+            # subpixel shifts for interpolation, add on 2026-04-23
+            subpix_result = get_mmf_q_map_subpix(
+            t_true,
+            tem,
+            inv_cov,
+            pix,
+            mmf_type=mmf_type,
+            cmmf_prec=cmmf_prec,
+            tem_norm=t_tem_norm,
+            comp=comp_to_calculate[k],
+            f_sky_apo=f_sky_apo,
+            subpix_shape=subpix_shape
+            )
+
+            q_map_tem = subpix_result["q_maps"][0, 0]
+            y_map = subpix_result["y_maps"][0, 0]
+            std = subpix_result["std"]
+
+        else:
+            print("Not using subpixel MMF")
+
+            subpix_result = None
+            q_map_tem,y_map,std = get_mmf_q_map(t_true,tem,inv_cov,pix,mmf_type=mmf_type,
+            cmmf_prec=cmmf_prec,tem_norm=t_tem_norm,comp=comp_to_calculate[k],
+                                               f_sky_apo = f_sky_apo)
+        
+        
 
         if weights is not None:
                 
@@ -1089,6 +1345,11 @@ tile_type="healpix",wcs=None,weights=None):
             j_clus = int(np.floor(theta_0/pix.dx))
             i_clus = int(pix.ny-np.ceil(theta_1/pix.dy))
 
+            q_opt[k] = q_map_tem[i_clus,j_clus]
+            y0_est[k] = y_map[i_clus,j_clus]
+            q_opt_subpix[k] = q_opt[k]
+            y0_est_subpix[k] = y0_est[k]
+
         elif tile_type == "car":
 
             ra = theta_0
@@ -1096,13 +1357,104 @@ tile_type="healpix",wcs=None,weights=None):
 
             from pixell import enmap
             
-            pix_coords = enmap.sky2pix((pix.nx,pix.ny),wcs,np.deg2rad([dec,ra]))
+            pix_coords = enmap.sky2pix((pix.nx,pix.ny),wcs,np.deg2rad([dec,ra]), corner = True)
+            
             i_clus,j_clus = np.round(pix_coords).astype(int)
-            #print(wcs,(dec,ra), i_clus,j_clus);exit()
-        q_opt[k] = q_map_tem[i_clus,j_clus]
-        y0_est[k] = y_map[i_clus,j_clus]
+            q_opt[k] = q_map_tem[i_clus,j_clus]
+            y0_est[k] = y_map[i_clus,j_clus]
+            q_opt_subpix[k] = q_opt[k]
+            y0_est_subpix[k] = y0_est[k]
+            
+            i_clus,j_clus = pix_coords
+            
+            from scipy.ndimage import map_coordinates
+            q_opt_intp[k] = map_coordinates(q_map_tem,
+                                        [[i_clus], [j_clus]],
+                                        order=2,        
+                                        mode="nearest"  
+                                    )[0]
+            y0_est_intp[k] = map_coordinates(y_map,
+                                        [[i_clus], [j_clus]],
+                                        order=2,        
+                                        mode="nearest"  
+                                    )[0]
+            if use_subpix_mmf:
 
-    return q_opt,y0_est,q_map
+                q_opt_subpix[k], y0_est_subpix[k], si, sj, i_coarse, j_coarse, \
+                i_pix_sampled, j_pix_sampled = sample_subpix_result_at_pixcoord(
+                    subpix_result, pix_coords)
+
+            
+            
+            
+    
+    return q_opt,y0_est,q_opt_intp,y0_est_intp,q_opt_subpix, y0_est_subpix, q_map
+
+
+# interpolation in blind mode, add on 2026-04-23
+def refine_detection_positions_2d(q_map, y_map, i_peak, j_peak, q_th, mask_peak_finding, params):
+    i_peak = np.asarray(i_peak, dtype=np.int64)
+    j_peak = np.asarray(j_peak, dtype=np.int64)
+    n_det = len(i_peak)
+
+    out = {
+        "i_interp": i_peak.astype(float),
+        "j_interp": j_peak.astype(float),
+        "q_interp": q_map[i_peak, j_peak] if n_det > 0 else np.empty(0),
+        "y0_interp": y_map[i_peak, j_peak] if n_det > 0 else np.empty(0),
+        "i_com": i_peak.astype(float),
+        "j_com": j_peak.astype(float),
+        "q_com": q_map[i_peak, j_peak] if n_det > 0 else np.empty(0),
+        "y0_com": y_map[i_peak, j_peak] if n_det > 0 else np.empty(0),
+    }
+
+    if n_det == 0:
+        return out
+
+    radius = params.get("blind_position_interp_radius_pix", 1.0)
+    oversample = params.get("blind_position_interp_oversample", 10)
+    order = params.get("blind_position_interp_order", 2)
+    offsets = np.linspace(-radius, radius, int(2 * radius * oversample) + 1)
+    # print("interpolation: radiue = ", radius, ",  oversample = ", oversample, ",  order = ", order)  # Debug only
+
+    mask_float = mask_peak_finding.astype(float)
+    
+    for k, (i0, j0) in enumerate(zip(i_peak, j_peak)):
+        ii, jj = np.meshgrid(i0 + offsets, j0 + offsets, indexing="ij")
+        coords = np.vstack([ii.ravel(), jj.ravel()])
+
+        valid = ndimage.map_coordinates(mask_float, coords, order=0, mode="constant", cval=0.) > 0.5
+        q_vals = ndimage.map_coordinates(q_map, coords, order=order, mode="nearest")
+        q_vals[~valid] = -np.inf
+
+        if np.any(np.isfinite(q_vals)):
+            ind = np.argmax(q_vals)
+            out["i_interp"][k] = coords[0, ind]
+            out["j_interp"][k] = coords[1, ind]
+            out["q_interp"][k] = q_vals[ind]
+            out["y0_interp"][k] = ndimage.map_coordinates(
+                y_map, [[out["i_interp"][k]], [out["j_interp"][k]]],
+                order=order, mode="nearest"
+            )[0]
+
+    # Center of mass calculation disabled (not needed)
+    # labels, _ = ndimage.label((q_map > q_th) & (mask_peak_finding != 0))
+    # for k, (i0, j0) in enumerate(zip(i_peak, j_peak)):
+    #     label_id = labels[i0, j0]
+    #     if label_id == 0:
+    #         continue
+    #
+    #     i_com, j_com = ndimage.center_of_mass(q_map, labels=labels, index=label_id)
+    #     if not np.isfinite(i_com) or not np.isfinite(j_com):
+    #         continue
+    #
+    #     out["i_com"][k] = i_com
+    #     out["j_com"][k] = j_com
+    #     out["q_com"][k] = ndimage.map_coordinates(q_map, [[i_com], [j_com]], order=order, mode="nearest")[0]
+    #     out["y0_com"][k] = ndimage.map_coordinates(y_map, [[i_com], [j_com]], order=order, mode="nearest")[0]
+
+    return out
+
 
 def apply_mask_peak_finding(tensor,mask):
 
@@ -1167,7 +1519,7 @@ def make_detections(q_tensor,q_th,pix,detection_method="maxima"):
 
     return ret
 
-def make_detections2(qmap,ymap,mask_peak_finding,q_th,zmax):
+def make_detections2(qmap,ymap,mask_peak_finding,q_th,zmax, params=None):
 
     coords = np.where(np.logical_and(mask_peak_finding, (qmap > q_th)))  # Assume binary mask
     maxs_idx = get_maxima(get_maxima_mask_2d(qmap, coords) & zmax)
@@ -1175,7 +1527,12 @@ def make_detections2(qmap,ymap,mask_peak_finding,q_th,zmax):
     q_opt = qmap[indices]
     y0_est = ymap[indices]
 
-    return q_opt,y0_est,maxs_idx ## arrays: (Ndetections,), (Ndetections,), (Ndetections, 2)
+    refined = refine_detection_positions_2d(
+    qmap, ymap, maxs_idx[:,0], maxs_idx[:,1],
+    q_th, mask_peak_finding, params or {}
+    )
+
+    return q_opt,y0_est,maxs_idx, refined ## arrays: (Ndetections,), (Ndetections,), (Ndetections, 2)
 
 #Mask for peak finding
 
@@ -1224,13 +1581,11 @@ mmf_type="standard",cmmf_prec=None,comp=0,tem_norm=None,
     
     tem_fft = maps.get_fft_f(tem,pix)
     tem_save = tem.copy() # debug
-    
+
+        
     filter_fft = get_tem_conv_fft(pix,tem_fft, inv_cov,mmf_type=mmf_type,
     cmmf_prec=cmmf_prec,comp=comp, field_id=field_id)
-    # print(filter_fft);exit()
     
-    
-
     filter = np.asarray(maps.get_ifft_f(filter_fft,pix).real,dtype=tmap.dtype)
 
     
@@ -1250,7 +1605,7 @@ mmf_type="standard",cmmf_prec=None,comp=0,tem_norm=None,
     # debug save
     if path_save:
         # np.savez(path_save, filter=filter, inv_cov=inv_cov, tem=tem, filter_fft=filter_fft, tem_fft=tem_fft, pix=pix, tmap = tmap)
-        np.savez(path_save, filter=filter, tem=tem, pix=pix,)
+        np.savez(path_save, filter=filter, tem=tem, pix=pix, filter_fft=filter_fft, tem_fft = tem_fft)
 
     del filter_fft, tem_fft
     
@@ -1278,20 +1633,139 @@ mmf_type="standard",cmmf_prec=None,comp=0,tem_norm=None,
     std = std/f_sky_apo
     
     q_map = y_map/std
-
-    # test code
-    # std_szifi = 1./np.sqrt(norm)
-    # std_pixels =  np.std(y_map)
-    # std_map_nemo = MakeNoiseMap_simple(mapData = y_map) 
-
-    # print("tem", tem_save)
-    # print("save:", path_save)
-    # np.savez(path_save, y_save= y_save, y_map=y_map, std=std, q_map=q_map, tmap = tmap, tem_norm = tem_norm, filter = filter, tem=tem_save, 
-    # std_szifi=std_szifi, std_pixels=std_pixels, std_map_nemo=std_map_nemo, inv_cov=inv_cov)
-    #exit()
-
    
     return q_map,y_map,std
+
+# based on get_mmf_q_map, with subpixel shifts for interpolation, add on 2026-04-23
+def get_mmf_q_map_subpix(tmap, tem, inv_cov, pix,
+mmf_type="standard", cmmf_prec=None, comp=0, tem_norm=None,
+                         f_sky_apo=1, field_id=0, noise_type="fid",
+                         subpix_shape=(3, 3),
+                         path_save=""):
+
+    if noise_type != "fid":
+        raise NotImplementedError(
+            "get_mmf_q_map_subpix currently supports only noise_type='fid'"
+        )
+    print("subpix_shape", subpix_shape)
+    n_sub_i, n_sub_j = subpix_shape
+    n_freqs = tmap.shape[2]
+
+    tem_local = tem.copy()
+    if tem_norm is None:
+        tem_norm_local = None
+    else:
+        tem_norm_local = tem_norm.copy()
+
+    tem_fft = maps.get_fft_f(tem_local, pix)
+
+    filter_fft = get_tem_conv_fft(
+        pix, tem_fft, inv_cov,
+        mmf_type=mmf_type,
+        cmmf_prec=cmmf_prec,
+        comp=comp,
+        field_id=field_id
+    )
+
+    filter0 = np.asarray(maps.get_ifft_f(filter_fft, pix).real, dtype=tmap.dtype)
+
+    tem_local[:] = maps.get_tmap_times_fvec(
+        tem_local, cmmf_prec.a_matrix[:, comp]
+    ).real
+
+    if tem_norm_local is None:
+        tem_norm_eff = tem_local
+    else:
+        tem_norm_eff = maps.get_tmap_times_fvec(
+            tem_norm_local, cmmf_prec.a_matrix[:, comp]
+        ).real
+
+    norm = np.sum(tem_norm_eff * filter0) * pix.dx * pix.dy
+    std = 1.0 / np.sqrt(norm)
+    std = std / f_sky_apo
+
+    lx, ly = maps.rmap(pix).get_lxly()
+
+    shift_i = np.arange(n_sub_i) * pix.dx / n_sub_i
+    shift_j = np.arange(n_sub_j) * pix.dy / n_sub_j
+
+    q_maps = np.zeros((n_sub_i, n_sub_j, pix.nx, pix.ny), dtype=tmap.dtype)
+    y_maps = np.zeros((n_sub_i, n_sub_j, pix.nx, pix.ny), dtype=tmap.dtype)
+
+    for si in range(n_sub_i):
+        for sj in range(n_sub_j):
+
+            phase = np.exp(
+                1j * (lx * shift_i[si] + ly * shift_j[sj])
+            )[:, :, None]
+
+            filter_fft_shift = filter_fft * phase
+            filter_shift = np.asarray(
+                maps.get_ifft_f(filter_fft_shift, pix).real,
+                dtype=tmap.dtype
+            )
+
+            y_map_shift = np.zeros((pix.nx, pix.ny), dtype=tmap.dtype)
+
+            for i_freq in range(n_freqs):
+                y = sg.fftconvolve(
+                    tmap[:, :, i_freq],
+                    filter_shift[:, :, i_freq],
+                    mode="same"
+                ) * pix.dx * pix.dy
+                y_map_shift += y
+
+            y_map_shift = np.asarray(y_map_shift, dtype=tmap.dtype)
+            y_map_shift = y_map_shift / norm
+            q_map_shift = y_map_shift / std
+
+            y_maps[si, sj, :, :] = y_map_shift
+            q_maps[si, sj, :, :] = q_map_shift
+
+    subpix_result = {
+        "q_maps": q_maps,
+        "y_maps": y_maps,
+        "std": std,
+        "subpix_shape": (n_sub_i, n_sub_j),
+        "shift_i": shift_i,
+        "shift_j": shift_j,
+    }
+
+    return subpix_result
+def sample_subpix_result_at_pixcoord(subpix_result, pix_coords):
+
+    n_sub_i, n_sub_j = subpix_result["subpix_shape"]
+    q_maps = subpix_result["q_maps"]
+    y_maps = subpix_result["y_maps"]
+
+    i_pix = float(pix_coords[0])
+    j_pix = float(pix_coords[1])
+
+    i_sub = int(np.round(n_sub_i * i_pix))
+    j_sub = int(np.round(n_sub_j * j_pix))
+    
+    si = i_sub % n_sub_i
+    sj = j_sub % n_sub_j
+
+    i_coarse = i_sub // n_sub_i
+    j_coarse = j_sub // n_sub_j
+
+    nx = q_maps.shape[2]
+    ny = q_maps.shape[3]
+
+    i_coarse = np.clip(i_coarse, 0, nx - 1)
+    j_coarse = np.clip(j_coarse, 0, ny - 1)
+
+    q_val = q_maps[si, sj, i_coarse, j_coarse]
+    y_val = y_maps[si, sj, i_coarse, j_coarse]
+
+    i_pix_sampled = i_sub / float(n_sub_i)
+    j_pix_sampled = j_sub / float(n_sub_j)
+
+    return q_val, y_val, si, sj, i_coarse, j_coarse, i_pix_sampled, j_pix_sampled
+
+
+
 def MakeNoiseMap_simple(mapData, noiseGridArcmin = 80, numBins=1):
     
     getPixelSizeDeg = 0.5/60
@@ -1339,7 +1813,7 @@ def get_tem_conv_fft(pix_tem,tem_fft,inv_cov,mmf_type="standard",cmmf_prec=None,
 
     tem_fft = maps.reshape_ell_matrix(tem_fft, inv_cov.shape[:2]) # Match to cut inv_cov
 
-    if mmf_type == "standard":
+    if mmf_type == "standard":    
 
         tem_fft = maps.get_tmap_times_fvec(tem_fft,cmmf_prec.a_matrix[:,comp]) #new line
         filter_fft = utils.get_inv_cov_conjugate(tem_fft,inv_cov)

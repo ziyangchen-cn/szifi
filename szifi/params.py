@@ -59,6 +59,8 @@ params_szifi_default = {
 "comp_to_calculate": [0], #Component in the mixing matrix to extract; if the tSZ SED is in the first column, this will be [0]
 "deproject_cib": None, #None, or ["cib"], ["cib","beta"], ["cib","betaT"], or ["cib","beta","betaT"; it superseeds the "a_matrix" given by hand
 "integrate_bandpass":True,
+"use_subpix_mmf": False, #if True, compute fixed-mode MMF on a subpixel grid for catalogue extraction
+"subpix_shape": (2, 2), #subpixel grid shape used when use_subpix_mmf is True
 
 "save_snr_maps": False,
 "snr_maps_name": None,

@@ -10,3 +10,4 @@ from .utils import *
 from .cat import *
 from .paint import *
 from .sed import *
+from .peaks import *

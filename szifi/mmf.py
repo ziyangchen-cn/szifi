@@ -84,7 +84,13 @@ class cluster_finder:
             self.t_noi = self.data_file["t_noi"][field_id] #in muK 
             
             self.mask_point = utils.extract(self.data_file,"mask_point",field_id,map_dtype)
-            self.mask_ps = utils.extract(self.data_file,"mask_ps", field_id,map_dtype)
+            # mask_window: apodized galaxy mask used as the window function for power-spectrum
+            # /covariance estimation (spec.power_spectrum, cspec.get_inv_cov/get_cov below). Must
+            # stay numerically identical to mask_map (same array, written to both keys by the
+            # survey file) -- the matched filter is built from this window's noise statistics and
+            # then applied to mask_map-windowed data, so the two have to match for the filter to
+            # be correctly calibrated. Not the point-source mask (that's mask_point/use_ps_mask).
+            self.mask_window = utils.extract(self.data_file,"mask_window", field_id,map_dtype)
             self.mask_select = utils.extract(self.data_file,"mask_select",field_id,map_dtype)
             self.mask_select_no_tile = utils.extract(self.data_file,"mask_select_no_tile",field_id,map_dtype)
             self.mask_select_buffer = utils.extract(self.data_file, "mask_select_buffer", field_id, map_dtype)
@@ -256,7 +262,7 @@ class cluster_finder:
                 bin_fac = self.params_szifi["powspec_bin_fac"]
                 
                 self.ps = spec.power_spectrum(self.pix,
-                mask=self.mask_ps,
+                mask=self.mask_window,
                 cm_compute=self.params_szifi["coupling_matrix_needed"],
                 cm_compute_scratch=self.params_szifi["compute_coupling_matrix"],
                 cm_save=self.params_szifi["save_coupling_matrix"],
@@ -281,7 +287,7 @@ class cluster_finder:
                 
                 
 #                 print("save", self.params_szifi["path_template"]+"input_"+str(field_id)+"_lmax"+str(lmax1d)+".npz")
-#                 np.savez(self.params_szifi["path_template"]+"input_"+str(field_id)+"_lmax"+str(lmax1d)+".npz", pix = self.pix, t_map=self.t_noi, new_shape=new_shape, mask=self.mask_ps, ell=self.cspec.ell_vec, spec_tensor=self.cspec.spec_tensor,
+#                 np.savez(self.params_szifi["path_template"]+"input_"+str(field_id)+"_lmax"+str(lmax1d)+".npz", pix = self.pix, t_map=self.t_noi, new_shape=new_shape, mask=self.mask_window, ell=self.cspec.ell_vec, spec_tensor=self.cspec.spec_tensor,
 # mask_select = self.mask_select, mask_point=self.mask_point, cov = cov)
 
                 # save_name = "/shared_home/Ziyang/Cluster_Finder/realisation_1/cov/cov_"+self.params_szifi["field_id"]+"_R"+str(self.params_szifi["R_mask"])+"_"+self.params_szifi["cov_type"]+".npz"
@@ -292,11 +298,11 @@ class cluster_finder:
                                                       interp_type=self.params_szifi["interp_type"],
                                                       bin_fac=bin_fac,
                                                       new_shape=new_shape,
-                                                      mask=self.mask_ps,
+                                                      mask=self.mask_window,
                                                       cov_type=self.params_szifi["cov_type"],
                                                       cov_kernel_shape=self.params_szifi["cov_kernel_shape"])#, save_name =save_name)
-                
-                
+
+
                 if self.params_szifi["path_diagnosis"]:
                     
                     # cov is just for test
@@ -305,10 +311,10 @@ class cluster_finder:
                                                           interp_type=self.params_szifi["interp_type"],
                                                           bin_fac=bin_fac,
                                                           new_shape=new_shape,
-                                                          mask=self.mask_ps,
+                                                          mask=self.mask_window,
                                                           cov_type=self.params_szifi["cov_type"],
                                                           cov_kernel_shape=self.params_szifi["cov_kernel_shape"])#, save_name =save_name)
-                    np.savez(self.params_szifi["path_diagnosis"]+"cov_"+field_id+"_it"+str(i)+"_apo"+str(self.params_szifi["aposcale"]), cov = cov, t_noi = self.t_noi, pix = self.pix, new_shape=new_shape, mask=self.mask_ps, inv_cov = self.inv_cov)
+                    np.savez(self.params_szifi["path_diagnosis"]+"cov_"+field_id+"_it"+str(i)+"_apo"+str(self.params_szifi["aposcale"]), cov = cov, t_noi = self.t_noi, pix = self.pix, new_shape=new_shape, mask=self.mask_window, inv_cov = self.inv_cov)
 
             
                 del self.mask_point

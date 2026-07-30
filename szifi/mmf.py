@@ -837,6 +837,41 @@ class filter_maps:
                     self.q_tensor[:,:,2] = q_map
 
                     qm = self.q_tensor[:,:,1] # We actually want to use the previous one
+
+                    # KNOWN ISSUE: clusters are silently dropped when two adjacent theta
+                    # layers hold bit-identical q values.  Not fixed here; get_maxima_mask
+                    # (used when use_q_tensor_interp is on) has the corrected test.
+                    #
+                    # Cause: argmax returns the FIRST maximum, so this test requires the
+                    # candidate layer to be STRICTLY above both theta neighbours.  The true
+                    # maximum of q(theta) almost never sits exactly on a grid layer -- it
+                    # falls between two of them, which makes those two layers nearly equal.
+                    # Once their difference drops below one float32 ulp they are the same
+                    # number, and then BOTH are rejected: layer k loses to k+1 here, and
+                    # k+1 loses to k on its own turn.  The detection is not displaced by one
+                    # layer, it vanishes from the catalogue entirely, even at high SNR.
+                    #
+                    # Example (CFC lowmass/mss2, seed 0, tile sq8deg_2_32, it1): q = 16.651106
+                    # at theta layers 42 and 43, both 0x41853577, while layer 41 is 866 ulp
+                    # away.  Spatially the same voxel led its four neighbours by 0.7-2.2 in q,
+                    # so only the theta test failed.
+                    #
+                    # Rate: finer theta grids bring adjacent layers closer together, so ties
+                    # get more frequent roughly as (dlog theta)^-2.  Measured fraction of it0
+                    # peaks with q>10 that have no it1 counterpart (seed 0, 450 tiles):
+                    #     n_theta =  80 :  0/8085  (0.00%)
+                    #     n_theta = 100 :  6/8098  (0.07%)
+                    #     n_theta = 120 :  6/8094  (0.07%)
+                    #     n_theta = 200 : 25/8133  (0.31%)
+                    # Which clusters are hit is effectively random from run to run, because
+                    # the it1 noise covariance is re-estimated from a randomly inpainted map
+                    # and shifts q by ~1e-4 in relative terms, far more than one ulp.
+                    #
+                    # Why it is not fixed here: the plateau test in get_maxima_mask needs
+                    # layer k+2 to confirm that a tied pair is a genuine maximum rather than
+                    # a flat step on a slope, and this rolling window only holds k-1, k, k+1.
+                    # Fixing it properly means deepening the window to four layers and
+                    # delaying the peak test by two layers instead of one.
                     zmax = np.argmax(self.q_tensor, axis=2) == 1
 
                     for mask_name in self.mask_names_finding:
@@ -848,6 +883,7 @@ class filter_maps:
                     if j == n_theta-1:
 
                         qm = self.q_tensor[:,:,2]
+                        # Same tie issue as above (see the note at the previous zmax).
                         zmax = np.argmax(self.q_tensor[:,:,1:], axis=2) == 1
 
                         for mask_name in self.mask_names_finding:
@@ -1544,12 +1580,33 @@ def make_detections2(qmap,ymap,mask_peak_finding,q_th,zmax, params=None):
 
 def get_maxima_mask(r_input):
 
-    r = np.ones((r_input.shape[0]+2,r_input.shape[1]+2,r_input.shape[2]+2)) * -np.inf
-    r[1:-1,1:-1,1:-1] = r_input
+    # Along each axis a voxel is a local maximum if it is strictly above its next
+    # neighbour and either strictly above the previous one, or exactly equal to the
+    # previous one while being strictly above the one beyond that.  The second clause
+    # lets a two-element plateau count exactly once (at its far end) and only when the
+    # plateau really is a maximum, not a flat step on a slope.
+    #
+    # The previous implementation used argmax([next, prev, centre], axis=0) == 2, which
+    # demanded strict inequality on BOTH sides.  Since argmax returns the FIRST maximum,
+    # an exact tie between adjacent layers rejected both members of the tied pair and the
+    # detection disappeared from the catalogue altogether.  Such ties are not pathological:
+    # the true maximum of q(theta) generally falls between two grid layers, so those two
+    # layers are nearly equal, and once their difference drops below one float32 ulp they
+    # become bit-identical.  See the note at the maxima_lomem theta test in find_clusters
+    # for measured rates and a worked example.
 
-    xmax=np.argmax([r[2:,1:-1,1:-1],r[:-2,1:-1,1:-1],r[1:-1,1:-1,1:-1]],axis=0) == 2
-    ymax=np.argmax([r[1:-1,2:,1:-1], r[1:-1,:-2,1:-1],r[1:-1,1:-1,1:-1]], axis=0) == 2
-    zmax=np.argmax([r[1:-1,1:-1, 2:], r[1:-1,1:-1, :-2], r[1:-1,1:-1, 1:-1]], axis=0) == 2
+    r = np.full((r_input.shape[0]+4, r_input.shape[1]+4, r_input.shape[2]+4),
+                -np.inf, dtype=r_input.dtype)
+    r[2:-2,2:-2,2:-2] = r_input
+    c = r[2:-2,2:-2,2:-2]
+
+    def axis_max(nxt, prv, prv2):
+
+        return (c > nxt) & ((c > prv) | ((c == prv) & (c > prv2)))
+
+    xmax = axis_max(r[3:-1,2:-2,2:-2], r[1:-3,2:-2,2:-2], r[:-4,2:-2,2:-2])
+    ymax = axis_max(r[2:-2,3:-1,2:-2], r[2:-2,1:-3,2:-2], r[2:-2,:-4,2:-2])
+    zmax = axis_max(r[2:-2,2:-2,3:-1], r[2:-2,2:-2,1:-3], r[2:-2,2:-2,:-4])
 
     return xmax&ymax&zmax
 

@@ -169,13 +169,13 @@ window_f150_1756699200_20000000000.txt"]
             # self.FWHM = np.array([7.4,5.1,2.2,1.4,1.,0.9])
             # self.noise_levels = np.array([71.,36.,8.,10.,22.,54.])
             # self.MJysr2muK = np.array([4.1877e3,2.632e3,2.0676e3,3.371e3,1.7508e4,6.9653e5])
-            # self.tsz_sed = np.array([-5.3487e6,-5.2384e6,-4.2840e6,-2.7685e6,3.1517e5,2.7314e6])
+            # self.tsz_sed = np.array([-5.3487e6,-5.2384e6,-4.2840e6,-2.7685e6,3.1517e5,2.6411e6])
 
             self.nu_eff = np.array([93.,145.,225.,278.])*1e9
             self.FWHM = np.array([2.2,1.4,1.,0.9])
             self.noise_levels = np.array([8.,10.,22.,54.])
             self.MJysr2muK = np.array([2.0676e3,3.371e3,1.7508e4,6.9653e5])
-            self.tsz_sed = np.array([-4.2840e6,-2.7685e6,3.1517e5,2.7314e6])
+            self.tsz_sed = np.array([-4.2840e6,-2.7685e6,3.1517e5,2.6411e6])   # 2026-10-12: 278 GHz value was 2.7314e6 = fSZ(280 GHz)*T_CMB, inconsistent with nu_eff = 278 GHz (3.4% high); now fSZ(278)*T_CMB, matching nemo/sim-kit
             
         # elif self.experiment_name == "SO_iso_f090":
         #     self.nu_eff = np.array([93.])*1e9
@@ -192,7 +192,7 @@ window_f150_1756699200_20000000000.txt"]
         #     #not sure
         #     self.noise_levels = np.array([12., 15., 33., 81.])
         #     self.MJysr2muK = np.array([2.0676e3,3.371e3,1.7508e4,6.9653e5])
-        #     self.tsz_sed = np.array([-4.2840e6,-2.7685e6,3.1517e5,2.7314e6])
+        #     self.tsz_sed = np.array([-4.2840e6,-2.7685e6,3.1517e5,2.6411e6])
 
         #     for i in range(0,len(self.nu_eff)):
         #         pa, freq = beam_pa_freqs[i]
@@ -210,7 +210,7 @@ window_f150_1756699200_20000000000.txt"]
             self.nu_eff = np.array([27.,39.,93.,145.,225.,278.])*1e9
             self.FWHM = np.array([7.4,5.1,2.2,1.4,1.,0.9])
             self.noise_levels = np.array([52.,27.,5.8,6.3,15.,37.])
-            self.tsz_sed = np.array([-5.3487e6,-5.2384e6,-4.2840e6,-2.7685e6,3.1517e5,2.7314e6])
+            self.tsz_sed = np.array([-5.3487e6,-5.2384e6,-4.2840e6,-2.7685e6,3.1517e5,2.6411e6])
 
         self.n_freqs = len(self.nu_eff)
 
@@ -301,7 +301,7 @@ class websky_conversions:
 
         self.freqs = np.array([27.,39.,93.,100.,143.,145.,217.,225.,280.,353.,545.,857.])*1e9
         self.MJysr2muK = np.array([4.5495e4,2.2253e4,4.6831e3,4.1877e3,2.6320e3,2.5947e3,2.0676e3,2.0716e3,2.3302e3,3.3710e3,1.7508e4,6.9653e5])
-        self.y2muK = np.array([-5.3487e6,-5.2384e6,-4.2840e6,-4.1103e6,-2.8355e6,-2.7685e6,-2.1188e4,3.1517e5,2.7314e6,6.1071e6,1.5257e7,3.0228e7])
+        self.y2muK = np.array([-5.3487e6,-5.2384e6,-4.2840e6,-4.1103e6,-2.8355e6,-2.7685e6,-2.1188e4,3.1517e5,2.6411e6,6.1071e6,1.5257e7,3.0228e7])
 
     def get_MJysr2muK(self,freq):
 

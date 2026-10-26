@@ -1032,7 +1032,9 @@ def convolve_tmap_experiment(pix,tmap,exp,freqs=None,beam_type="gaussian",tile_t
 
                 map_freq = enmap.enmap(tmap[:,:,i],wcs)
                 sigma = exp.FWHM[freqs[i]]/(2.*np.sqrt(2.*np.log(2)))/60./180.*np.pi
-                tmap_convolved[:,:,i] = enmap.smooth_gauss(map_freq, sigma)
+                # maps are pixel-window convolved (nemoModel applies enmap.apply_window
+                # to the tSZ layer); the template must match
+                tmap_convolved[:,:,i] = enmap.apply_window(enmap.smooth_gauss(map_freq, sigma), pow=1.0)
 
             elif beam_type == "real":
                 from pixell import curvedsky
@@ -1041,7 +1043,8 @@ def convolve_tmap_experiment(pix,tmap,exp,freqs=None,beam_type="gaussian",tile_t
                 alm = curvedsky.map2alm(map_freq, lmax=len(B_l)-1)  # map_freq 是您的 enmap
                 alm_smoothed = curvedsky.almxfl(alm, B_l)  # 这就是关键步骤：alm * B_l
                 template = enmap.zeros(map_freq.shape, map_freq.wcs)  # 这是一个空的 enmap 对象
-                tmap_convolved[:,:,i] = curvedsky.alm2map(alm_smoothed, template)  # 保持相同的形状和 WCS
+                # pixel window: same reason as the gaussian branch above
+                tmap_convolved[:,:,i] = enmap.apply_window(curvedsky.alm2map(alm_smoothed, template), pow=1.0)
 
 
                 #tmap_convolved = None #todo

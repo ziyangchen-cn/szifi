@@ -687,6 +687,18 @@ class filter_maps:
 
             return 0
         
+        # 2026-10-26 (opt-in, default off): cross-response Q_SZ(theta_j) = (tem_j . filter_ref)/(tem_ref . filter_ref) of the FIXED theta_ref filter
+        # (params 'qsz_ref_ind') to a theta_j cluster, per tile and iteration, saved to params 'qsz_path' as [theta_500_vec, qsz]; standard MMF, arnaud only.
+        qsz_ref = self.params.get("qsz_ref_ind", None)
+        if qsz_ref is not None:
+            jr = int(qsz_ref); nfw_r = model.gnfw(model.get_m_500(self.theta_500_vec[jr], 0.4, self.cosmology), 0.4, self.cosmology, type=self.params_model["profile_type"])
+            t_r = nfw_r.get_t_map_convolved(self.pix, self.exp, beam=self.params["beam"], theta_cart=[(0.5*self.pix.nx)*self.pix.dx, (0.5*self.pix.nx)*self.pix.dx],
+                get_nc=False, sed=False, eval_type=self.params.get("template_eval_type", "standard"), tile_type=self.params["tile_type"], wcs=self.wcs)
+            tem_r = maps.filter_tmap(t_r/nfw_r.get_y_norm(self.params["norm_type"]), self.pix, self.params["lrange"], indices_filter=self.indices_filter)
+            filt_r = np.asarray(maps.get_ifft_f(get_tem_conv_fft(self.pix, maps.get_fft_f(tem_r, self.pix), self.inv_cov, mmf_type=self.params["mmf_type"],
+                cmmf_prec=self.cmmf, comp=0, field_id=self.field_id), self.pix).real, dtype=t_obs.dtype)
+            norm_r = np.sum(maps.get_tmap_times_fvec(tem_r, self.cmmf.a_matrix[:, 0]).real*filt_r)*self.pix.dx*self.pix.dy; qsz = np.zeros(n_theta); del t_r, tem_r
+
         # MMF
         for j in range(0,n_theta):
 
@@ -730,6 +742,7 @@ class filter_maps:
                         theta_cart=theta_cart,
                         get_nc=False,
                         sed=False,
+                        eval_type=self.params.get("template_eval_type","standard"),
                         tile_type=self.params["tile_type"],
                         wcs=self.wcs
                         )
@@ -743,6 +756,7 @@ class filter_maps:
                         theta_cart=theta_cart,
                         get_nc=True,
                         sed=False,
+                        eval_type=self.params.get("template_eval_type","standard"),
                         tile_type=self.params["tile_type"],
                         wcs=self.wcs
                         )
@@ -787,6 +801,12 @@ class filter_maps:
                     path_save = self.params["path_diagnosis"]+"filter_"+self.field_id+"_l"+str(self.lmax)+"_nth"+str(j)+"_it"+str(self.i_it)
 
                 
+            if qsz_ref is not None:   # before get_mmf_q_map, which multiplies tem by the SED in place
+                qsz[j] = np.sum(maps.get_tmap_times_fvec(tem, self.cmmf.a_matrix[:, 0]).real*filt_r)*self.pix.dx*self.pix.dy/norm_r
+                if j == n_theta - 1:
+                    os.makedirs(self.params["qsz_path"], exist_ok=True)
+                    np.save(os.path.join(self.params["qsz_path"], f"qsz_{self.field_id}_it{self.i_it}.npy"), np.array([self.theta_500_vec, qsz]))
+
             q_map,y_map,std = get_mmf_q_map(t_obs,
             tem,
             self.inv_cov,
@@ -812,7 +832,9 @@ class filter_maps:
             del tem, t_tem_norm
 
             
-            if self.params["save_snr_maps"] == True:
+            if self.params["save_snr_maps"] == True and (
+                self.params.get("snr_maps_theta_ind") is None
+                or j in self.params["snr_maps_theta_ind"]):
 
                 fil = gzip.GzipFile(self.params["snr_maps_path"] + "/" + self.params["snr_maps_name"] + "_q_" + str(self.i_it) + "_" + str(j) + ".npy.gz", "w")
                 np.save(file=fil,arr=q_map)

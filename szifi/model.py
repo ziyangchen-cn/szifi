@@ -254,11 +254,28 @@ class gnfw:
 
         return y_map
 
-    def get_t_map_convolved_hankel(self,pix,exp,theta_misc=[0.,0.],beam_type="gaussian",get_nc=False,sed=None,tile_type="healpix"):
+    def get_t_map_convolved_hankel(self,pix,exp,theta_misc=[0.,0.],beam_type="gaussian",get_nc=False,sed=None,tile_type="healpix",wcs=None):
 
         theta_vec,t_vec_conv,t_vec = self.get_t_vec_convolved_hankel(pix,exp,beam_type=beam_type,get_nc=True,sed=sed)
 
-        theta_map = maps.rmap(pix).get_distance_map_wrt_centre(theta_misc)
+        if tile_type == "healpix":
+
+            theta_map = maps.rmap(pix).get_distance_map_wrt_centre(theta_misc)
+
+        elif tile_type == "car":
+
+            # same position convention as get_p_cal_map's CAR branch:
+            # theta_misc==[0,0] -> the (n-1)/2 half-pixel corner, else pixel coords
+            from pixell import enmap, utils
+
+            pos = enmap.empty((pix.nx,pix.ny),wcs).posmap()
+            dec_map, ra_map = pos
+            if theta_misc[0]==0 and theta_misc[1]==0:
+                pix_center = [(pix.nx - 1) / 2, (pix.ny - 1) / 2]
+            else:
+                pix_center = theta_misc
+            dec0, ra0 = enmap.pix2sky((pix.nx,pix.ny),wcs,pix_center)
+            theta_map = utils.angdist([ra0,dec0], [ra_map,dec_map])
 
         t_map = np.zeros((pix.nx,pix.ny,exp.n_freqs))
         t_map_conv = np.zeros((pix.nx,pix.ny,exp.n_freqs))
@@ -267,6 +284,16 @@ class gnfw:
 
             t_map_conv[:,:,i] = np.interp(theta_map,theta_vec,t_vec_conv[:,i],right=0.)
             t_map[:,:,i] = np.interp(theta_map,theta_vec,t_vec[:,i],right=0.)
+
+        if tile_type == "car":
+
+            # maps are pixel-window convolved (nemoModel applies enmap.apply_window
+            # to the tSZ layer); the convolved template must match
+            from pixell import enmap
+
+            for i in range(0,exp.n_freqs):
+
+                t_map_conv[:,:,i] = enmap.apply_window(enmap.enmap(t_map_conv[:,:,i],wcs), pow=1.0)
 
         if get_nc == True:
 
@@ -352,8 +379,7 @@ class gnfw:
 
         elif eval_type == "hankel":
 
-            tmap_convolved,tmap = self.get_t_map_convolved_hankel(pix,exp,theta_misc=theta_misc,beam_type=beam,get_nc=True,sed=sed)
-            #tmap_convolved,tmap = self.get_t_map_convolved_hankel2(pix,exp,theta_misc=theta_misc,beam_type=beam,get_nc=True,sed=sed)
+            tmap_convolved,tmap = self.get_t_map_convolved_hankel(pix,exp,theta_misc=theta_misc,beam_type=beam,get_nc=True,sed=sed,tile_type=tile_type,wcs=wcs)
 
         if get_nc == True:
 
